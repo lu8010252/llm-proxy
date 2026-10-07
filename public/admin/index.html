@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LLM 转发网关 · 配置管理</title>
+<script src="/theme.js"></script>
+<style>
+  :root {
+    --bg: #0a0a12; --surface: #14141f; --surface-2: #1b1b29; --border: #2a2a3d;
+    --text: #eef0f7; --text-dim: #8b8ba8; --accent: #4fd8ff; --accent2: #b06bff;
+    --ok: #3ee89a; --warn: #ffc857; --err: #ff5fa8; --radius: 12px;
+    --nav-bg: rgba(10,10,18,0.85); --bar-bg: rgba(18,18,29,0.9); --hover: #232333;
+    --danger-b: #5a2438; --on-accent: #0a0a12;
+    --g1: rgba(176,107,255,0.10); --g2: rgba(79,216,255,0.10);
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f5fa; --surface: #ffffff; --surface-2: #eef0f6; --border: #d8dbe8;
+    --text: #1b1d2a; --text-dim: #667085; --accent: #0284c7; --accent2: #7c3aed;
+    --ok: #059669; --warn: #b7791f; --err: #dc2626;
+    --nav-bg: rgba(255,255,255,0.88); --bar-bg: rgba(255,255,255,0.92); --hover: #e4e7f0;
+    --danger-b: #f0b4b4; --on-accent: #ffffff;
+    --g1: rgba(124,58,237,0.06); --g2: rgba(2,132,199,0.06);
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(circle at 15% 0%, var(--g1), transparent 40%), radial-gradient(circle at 85% 8%, var(--g2), transparent 40%), var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft Yahei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--nav-bg); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; color: var(--text); }
+  .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px 2px rgba(62,232,154,0.5); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+  .nav-right { display: flex; align-items: center; gap: 8px; }
+  .nav-links { display: flex; gap: 2px; }
+  .nav-links a { padding: 6px 14px; border-radius: 999px; font-size: 13px; color: var(--text-dim); }
+  .nav-links a.active { color: var(--on-accent); background: linear-gradient(135deg, var(--accent), var(--accent2)); font-weight: 600; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .nav-links a.active:hover { color: var(--on-accent); }
+  #themeBtn { padding: 5px 11px; border-radius: 999px; font-size: 12px; }
+
+  main { max-width: 960px; margin: 0 auto; padding: 22px 20px 100px; }
+  section.card, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; }
+  section.card h2 { margin: 0 0 14px; font-size: 13px; font-weight: 600; color: var(--text-dim); }
+  details.card > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-dim); list-style: none; display: flex; align-items: center; gap: 8px; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before { content: '▸'; font-size: 11px; transition: transform .15s; }
+  details.card[open] > summary::before { transform: rotate(90deg); }
+  details.card[open] > summary { margin-bottom: 14px; }
+  details.keybox { padding: 12px 18px; }
+  details.keybox[open] > summary { margin-bottom: 10px; }
+  details.keybox .row { margin-bottom: 0; }
+  /* 顶部标签:一屏只看一类设置 */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 18px; overflow-x: auto; }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--text-dim); padding: 9px 18px; font-size: 14px; }
+  .tabs button:hover { color: var(--text); background: none; }
+  .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .tabs .badge { margin-left: 6px; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: rgba(255,200,87,.2); color: var(--warn); }
+  .pane { display: none; }
+  .pane.on { display: block; }
+  .f2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; margin-bottom: 10px; }
+  .fld label { display: block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 4px; }
+  .fld .inl { display: flex; gap: 8px; }
+  .f2 .wide { grid-column: 1 / -1; }
+  .small { font-size: 12px; color: var(--text-dim); }
+
+  input, select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; width: 100%; min-width: 0; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  button { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  button:hover { background: var(--hover); }
+  button.danger { border-color: var(--danger-b); color: var(--err); }
+  button.danger:hover { background: rgba(255,95,168,.10); }
+  button.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: transparent; color: var(--on-accent); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button.sm { padding: 5px 10px; font-size: 12px; }
+
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .row label { width: 210px; color: var(--text-dim); font-size: 13px; flex-shrink: 0; }
+
+  /* 紧凑单行:Provider / 渠道 / 路由 */
+  .prow, .crow, .rrow { display: grid; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--bg); }
+  .prow { grid-template-columns: 130px minmax(0,1.5fr) minmax(0,1fr) auto; }
+  .crow { grid-template-columns: minmax(0,1fr) minmax(0,1.6fr) 72px auto; }
+  .rrow { grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; }
+  .acts { display: flex; gap: 6px; align-items: center; }
+  .adv { grid-column: 1 / -1; display: none; gap: 8px; align-items: center; padding-top: 8px; border-top: 1px dashed var(--border); }
+  .adv.open { display: flex; flex-wrap: wrap; }
+  .adv input[type=text], .adv input:not([type]) { width: 180px; }
+  .adv label { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .adv label input { width: auto; }
+  .adv .lbl { font-size: 12px; color: var(--text-dim); }
+
+  .group-block { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .group-head { display: flex; align-items: center; margin-bottom: 8px; gap: 8px; }
+  .group-head strong { font-size: 13px; }
+  .group-head .sp { margin-left: auto; display: flex; gap: 6px; }
+  .group-block .crow:last-child { margin-bottom: 0; }
+
+  #banner { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); padding: 9px 18px; border-radius: 8px; font-size: 13px; display: none; z-index: 100; }
+  #banner.ok { background: rgba(62,232,154,.18); color: var(--ok); border: 1px solid rgba(62,232,154,.35); display: block; }
+  #banner.err { background: rgba(255,95,168,.15); color: var(--err); border: 1px solid rgba(255,95,168,.3); display: block; }
+
+  .test-badge { font-size: 12px; padding: 3px 9px; border-radius: 999px; cursor: help; white-space: nowrap; display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+  .test-ok { background: rgba(62,232,154,.15); color: var(--ok); }
+  .test-err { background: rgba(255,95,168,.15); color: var(--err); }
+  #saveBtn { transition: background .2s, border-color .2s, color .2s; }
+
+  .savebar { position: fixed; bottom: 0; left: 0; right: 0; background: var(--bar-bg); backdrop-filter: blur(8px); border-top: 1px solid var(--border); padding: 12px 20px; display: flex; gap: 10px; justify-content: flex-end; z-index: 15; }
+
+  table.disabled-table { width: 100%; border-collapse: collapse; }
+  table.disabled-table th, table.disabled-table td { padding: 7px 8px; font-size: 13px; text-align: left; border-bottom: 1px solid var(--border); }
+  table.disabled-table th { color: var(--text-dim); font-weight: 500; font-size: 12px; }
+
+  @media (max-width: 640px) {
+    main { padding: 16px 12px 100px; }
+    .topnav { padding: 10px 14px; }
+    .row { flex-direction: column; align-items: stretch; }
+    .f2 { grid-template-columns: 1fr; }
+    .row label { width: auto; }
+    .savebar { padding: 10px 12px; flex-wrap: wrap; }
+    .prow, .crow, .rrow { grid-template-columns: 1fr 1fr; }
+    .prow > :nth-child(2), .prow > :nth-child(3), .crow > :nth-child(2), .rrow > .acts { grid-column: 1 / -1; }
+    .acts { flex-wrap: wrap; }
+    .nav-links a { padding: 6px 9px; }
+    table.disabled-table, table.disabled-table thead, table.disabled-table tbody, table.disabled-table th, table.disabled-table td, table.disabled-table tr { display: block; }
+    table.disabled-table thead { display: none; }
+    table.disabled-table tr { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+    table.disabled-table td { border: none; padding: 3px 0; }
+    table.disabled-table td::before { content: attr(data-label); color: var(--text-dim); font-size: 11px; display: block; }
+  }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/"><span class="brand-dot"></span>LLM 转发网关</a>
+  <div class="nav-right">
+    <div class="nav-links">
+      <a href="/">首页</a>
+      <a href="/dashboard/">日志</a>
+      <a href="/admin/" class="active">配置</a>
+    </div>
+    <button id="themeBtn" onclick="cycleTheme()" title="切换 自动 / 浅色 / 深色">🌗 自动</button>
+  </div>
+</nav>
+
+<main>
+  <div id="banner"></div>
+
+  <details class="card keybox" id="keyBox">
+    <summary>🔑 管理密钥 <span class="small" id="keyState"></span></summary>
+    <div class="row">
+      <label>GATEWAY_KEY(服务端设置了才需要填)</label>
+      <input id="adminKey" type="password" placeholder="留空表示服务端未设置密钥" />
+      <button onclick="saveKeyAndLoad()">保存并加载</button>
+    </div>
+  </details>
+
+  <div class="tabs" id="tabs">
+    <button data-tab="ch" class="on">渠道<span class="badge" id="disBadge" style="display:none"></span></button>
+    <button data-tab="pol">策略</button>
+    <button data-tab="ap">外观</button>
+  </div>
+
+  <div class="pane on" id="pane_ch">
+    <section class="card" id="disCard" style="display:none">
+      <h2>🚫 被禁用的渠道(额度超限自动禁用,到时间自动恢复)</h2>
+      <table class="disabled-table">
+        <thead><tr><th>分组</th><th>Provider</th><th>Model</th><th>原因</th><th>预计恢复</th><th></th></tr></thead>
+        <tbody id="disabledRows"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Providers(各家 API 的地址和密钥)</h2>
+      <div id="providerRows"></div>
+      <button onclick="addProviderRow()">+ 添加 Provider</button>
+    </section>
+
+    <section class="card">
+      <h2>Model Groups(虚拟模型名 → 多渠道按权重 + 失败自动切换)</h2>
+      <div id="groupsContainer"></div>
+      <button onclick="addGroup()">+ 添加分组</button>
+      <div class="small" style="margin-top:12px">删掉模型 / 渠道后点「保存」,它们在首页和日志里的历史数据会自动清掉。
+        <a href="#" onclick="purgeStale();return false">立即清理以前删除时遗留的数据</a></div>
+    </section>
+
+    <details class="card" id="routeBox">
+      <summary>模型前缀路由(单渠道场景,比如 gpt- 开头都转发到 openai) <span class="small" id="routeCnt"></span></summary>
+      <div id="routingRows"></div>
+      <button onclick="addRoutingRow()">+ 添加规则</button>
+    </details>
+  </div>
+
+  <div class="pane" id="pane_pol">
+    <section class="card">
+      <h2>失败处理</h2>
+      <div class="f2">
+        <div class="fld"><label>可重试的状态码(逗号分隔)</label><input id="retryStatusCodes" placeholder="429,500,502,503,504" /></div>
+        <div class="fld"><label>触发自动禁用的状态码</label><input id="autoDisableStatusCodes" placeholder="403,429" /></div>
+        <div class="fld">
+          <label>禁用后怎么恢复</label>
+          <select id="autoDisableMode" onchange="toggleDisableMode()">
+            <option value="hours">过固定时长后恢复</option>
+            <option value="resetHour">每天固定时间点恢复</option>
+          </select>
+        </div>
+        <div class="fld" id="autoDisableHoursRow"><label>禁用多久(小时)</label><input id="autoDisableHours" type="number" /></div>
+        <div class="fld" id="autoDisableResetHourRow"><label>每天几点恢复(0-23,1 = 凌晨 1 点)</label><input id="autoDisableResetHour" type="number" min="0" max="23" /></div>
+      </div>
+      <div class="small">返回「可重试」状态码时自动换下一个渠道;命中「触发自动禁用」的状态码,还会把该渠道暂时禁用。「每天固定时间点」适合额度每天定时重置的免费 API:渠道会被禁用到下一个这个时间点。</div>
+    </section>
+
+    <section class="card">
+      <h2>日志与通知</h2>
+      <div class="f2">
+        <div class="fld"><label>日志保留天数</label><input id="logRetentionDays" type="number" min="1" /></div>
+        <div class="fld"><label>ntfy 通知地址(留空 = 关闭通知)</label><div class="inl"><input id="notifyUrl" placeholder="https://ntfy.example.com/主题" /><button onclick="testNotify()">发测试通知</button></div></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="pane" id="pane_ap">
+    <section class="card">
+      <h2>外观</h2>
+      <div id="apBox"></div>
+    </section>
+  </div>
+</main>
+
+<div class="savebar">
+  <button onclick="loadConfig()">放弃修改,重新加载</button>
+  <button class="primary" id="saveBtn" onclick="saveConfig()">保存全部配置</button>
+</div>
+
+<script>
+let cfg = null;
+let providerNames = [];
+const advOpen = new Set();
+
+function authHeaders() {
+  const key = localStorage.getItem('llmproxy_admin_key') || '';
+  return key ? { Authorization: 'Bearer ' + key } : {};
+}
+function saveKeyAndLoad() {
+  localStorage.setItem('llmproxy_admin_key', document.getElementById('adminKey').value.trim());
+  keyState();
+  loadConfig();
+  loadState();
+}
+function keyState() {
+  document.getElementById('keyState').textContent = localStorage.getItem('llmproxy_admin_key') ? '· 已保存' : '· 未设置(服务端没设密钥时不用填)';
+}
+function showTab(t) {
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('on', p.id === 'pane_' + t));
+  document.querySelector('.savebar').style.display = t === 'ap' ? 'none' : '';   // 外观是即时生效的,不需要保存条
+  try { history.replaceState(null, '', '#' + t); } catch {}
+}
+document.getElementById('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) showTab(b.dataset.tab); });
+function banner(msg, ok) {
+  const b = document.getElementById('banner');
+  b.textContent = msg;
+  b.className = ok ? 'ok' : 'err';
+  clearTimeout(banner._t);
+  banner._t = setTimeout(() => { b.style.display = 'none'; }, 3500);
+}
+function esc(s) {
+  return (s ?? '').toString().replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+function idSafe(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
+function jq(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config', { headers: authHeaders() });
+    const data = await res.json();
+    if (res.status === 401) { const kb = document.getElementById('keyBox'); kb.open = true; document.getElementById('adminKey').focus(); }
+    if (!res.ok) throw new Error(data.error || res.status);
+    cfg = data;
+    cfg.providers = cfg.providers || [];
+    cfg.modelRouting = cfg.modelRouting || [];
+    cfg.modelGroups = cfg.modelGroups || {};
+    cfg.retryStatusCodes = cfg.retryStatusCodes || [429, 500, 502, 503, 504];
+    cfg.autoDisableStatusCodes = cfg.autoDisableStatusCodes || [403, 429];
+    cfg.autoDisableMode = cfg.autoDisableMode || 'hours';
+    cfg.autoDisableHours = cfg.autoDisableHours ?? 24;
+    cfg.autoDisableResetHour = cfg.autoDisableResetHour ?? 1;
+    cfg.logRetentionDays = cfg.logRetentionDays ?? 3;
+    cfg.notify = cfg.notify || {};
+    render();
+    banner('已加载配置', true);
+  } catch (e) {
+    banner('加载失败: ' + e.message, false);
+  }
+}
+
+async function loadState() {
+  try {
+    const res = await fetch('/api/state', { headers: authHeaders() });
+    if (!res.ok) return;
+    const st = await res.json();
+    const rows = Object.entries(st.disabled || {});
+    document.getElementById('disCard').style.display = rows.length ? '' : 'none';
+    const bd = document.getElementById('disBadge');
+    bd.style.display = rows.length ? '' : 'none';
+    bd.textContent = rows.length ? rows.length + ' 个被禁用' : '';
+    document.getElementById('disabledRows').innerHTML = rows.map(([key, v]) => {
+      const [group, provider, model] = key.split('::');
+      return `<tr>
+        <td data-label="分组">${esc(group)}</td>
+        <td data-label="Provider">${esc(provider)}</td>
+        <td data-label="Model">${esc(model)}</td>
+        <td data-label="原因">${esc(v.reason || '')}</td>
+        <td data-label="预计恢复">${new Date(v.until).toLocaleString()}</td>
+        <td><button onclick="enableChannel('${jq(key)}')">立即启用</button></td>
+      </tr>`;
+    }).join('');
+  } catch { /* 忽略面板轮询错误 */ }
+}
+
+async function enableChannel(key) {
+  await fetch('/api/state/enable', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  loadState();
+}
+
+function render() {
+  renderProviders();
+  renderGroups();
+  renderRouting();
+  document.getElementById('routeBox').open = cfg.modelRouting.length > 0;
+  document.getElementById('retryStatusCodes').value = cfg.retryStatusCodes.join(',');
+  document.getElementById('autoDisableStatusCodes').value = cfg.autoDisableStatusCodes.join(',');
+  document.getElementById('autoDisableMode').value = cfg.autoDisableMode;
+  document.getElementById('autoDisableHours').value = cfg.autoDisableHours;
+  document.getElementById('autoDisableResetHour').value = cfg.autoDisableResetHour;
+  document.getElementById('logRetentionDays').value = cfg.logRetentionDays;
+  document.getElementById('notifyUrl').value = cfg.notify.url || '';
+  toggleDisableMode();
+}
+function toggleDisableMode() {
+  const mode = document.getElementById('autoDisableMode').value;
+  document.getElementById('autoDisableHoursRow').style.display = mode === 'hours' ? '' : 'none';
+  document.getElementById('autoDisableResetHourRow').style.display = mode === 'resetHour' ? '' : 'none';
+}
+
+// ---- Providers:一行一个,少用的三项收进「高级」 ----
+function renderProviders() {
+  providerNames = cfg.providers.map((p) => p.name);
+  document.getElementById('providerRows').innerHTML = cfg.providers.map((p, i) => `
+    <div class="prow">
+      <input placeholder="名字" title="名字" value="${esc(p.name)}" data-p="${i}" data-f="name" />
+      <input placeholder="Base URL" title="Base URL" value="${esc(p.baseUrl)}" data-p="${i}" data-f="baseUrl" />
+      <input type="password" placeholder="API Key" title="API Key" value="${esc(p.apiKey)}" data-p="${i}" data-f="apiKey" />
+      <div class="acts">
+        <button type="button" class="sm" onclick="testProvider(${i})">测试</button>
+        <span id="test-result-provider-${i}"></span>
+        <button type="button" class="sm" onclick="toggleAdv(${i})">高级</button>
+        <button type="button" class="sm danger" onclick="removeProvider(${i})">删除</button>
+      </div>
+      <div class="adv ${advOpen.has(i) ? 'open' : ''}" id="adv-${i}">
+        <span class="lbl">Auth Header</span><input value="${esc(p.authHeader || 'Authorization')}" data-p="${i}" data-f="authHeader" />
+        <span class="lbl">Auth Prefix</span><input value="${esc(p.authPrefix ?? 'Bearer ')}" data-p="${i}" data-f="authPrefix" />
+        <label><input type="checkbox" ${p.pathPrefix === '' ? 'checked' : ''} data-pcheck="${i}" />去掉请求路径里的 /v1(智谱等特殊接口需要)</label>
+      </div>
+    </div>
+  `).join('');
+}
+function toggleAdv(i) {
+  const el = document.getElementById('adv-' + i);
+  if (!el) return;
+  el.classList.toggle('open');
+  if (el.classList.contains('open')) advOpen.add(i); else advOpen.delete(i);
+}
+function addProviderRow() {
+  collectFromDom();
+  cfg.providers.push({ name: 'new-provider', baseUrl: 'https://', apiKey: '', authHeader: 'Authorization', authPrefix: 'Bearer ' });
+  renderProviders(); renderGroups(); renderRouting();
+}
+function removeProvider(i) {
+  collectFromDom();
+  cfg.providers.splice(i, 1);
+  advOpen.clear();
+  renderProviders(); renderGroups(); renderRouting();
+}
+
+function renderRouting() {
+  document.getElementById('routeCnt').textContent = cfg.modelRouting.length ? '· ' + cfg.modelRouting.length + ' 条' : '· 暂无';
+  document.getElementById('routingRows').innerHTML = cfg.modelRouting.map((r, i) => `
+    <div class="rrow">
+      <input placeholder="前缀,如 gpt-" value="${esc(r.prefix)}" data-r="${i}" data-f="prefix" />
+      <select data-r="${i}" data-f="provider">${providerNames.map((n) => `<option value="${esc(n)}" ${n === r.provider ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <div class="acts"><button class="sm danger" onclick="removeRouting(${i})">删除</button></div>
+    </div>
+  `).join('');
+}
+function addRoutingRow() {
+  collectFromDom();
+  cfg.modelRouting.push({ prefix: '', provider: providerNames[0] || '' });
+  renderRouting();
+}
+function removeRouting(i) {
+  collectFromDom();
+  cfg.modelRouting.splice(i, 1);
+  renderRouting();
+}
+
+// ---- Model Groups:每个渠道一行 ----
+function renderGroups() {
+  const container = document.getElementById('groupsContainer');
+  container.innerHTML = Object.entries(cfg.modelGroups).map(([name, channels]) => `
+    <div class="group-block">
+      <div class="group-head">
+        <strong>${esc(name)}</strong><span class="small">${channels.length} 个渠道</span>
+        <span class="sp">
+          <button class="sm" onclick="addChannel('${jq(name)}')">+ 渠道</button>
+          <button class="sm danger" onclick="removeGroup('${jq(name)}')">删除分组</button>
+        </span>
+      </div>
+      ${channels.map((c, ci) => `
+        <div class="crow">
+          <select title="Provider" data-group="${esc(name)}" data-ci="${ci}" data-f="provider">${providerNames.map((n) => `<option value="${esc(n)}" ${n === c.provider ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+          <input placeholder="真实 Model" title="真实 Model" value="${esc(c.model || '')}" data-group="${esc(name)}" data-ci="${ci}" data-f="model" />
+          <input type="number" placeholder="权重" title="权重" value="${c.weight ?? 1}" data-group="${esc(name)}" data-ci="${ci}" data-f="weight" />
+          <div class="acts">
+            <button type="button" class="sm" onclick="testChannel('${jq(name)}', ${ci})">测试</button>
+            <span id="test-result-channel-${idSafe(name)}-${ci}"></span>
+            <button class="sm danger" onclick="removeChannel('${jq(name)}', ${ci})">删除</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+function addGroup() {
+  collectFromDom();
+  const name = prompt('新分组的虚拟模型名,比如 free-chat');
+  if (!name) return;
+  if (cfg.modelGroups[name]) { alert('已存在同名分组'); return; }
+  cfg.modelGroups[name] = [];
+  renderGroups();
+}
+function removeGroup(name) {
+  if (!confirm('确定删除分组 ' + name + ' ?')) return;
+  collectFromDom();
+  delete cfg.modelGroups[name];
+  renderGroups();
+}
+function addChannel(group) {
+  collectFromDom();
+  cfg.modelGroups[group].push({ provider: providerNames[0] || '', model: '', weight: 1 });
+  renderGroups();
+}
+function removeChannel(group, ci) {
+  collectFromDom();
+  cfg.modelGroups[group].splice(ci, 1);
+  renderGroups();
+}
+
+function collectFromDom() {
+  if (!cfg) return;
+  document.querySelectorAll('#providerRows input:not([type=checkbox])').forEach((inp) => {
+    const i = inp.dataset.p, f = inp.dataset.f;
+    if (i !== undefined && cfg.providers[i]) cfg.providers[i][f] = inp.value;
+  });
+  document.querySelectorAll('#providerRows input[type=checkbox]').forEach((cb) => {
+    const i = cb.dataset.pcheck;
+    if (i === undefined || !cfg.providers[i]) return;
+    if (cb.checked) cfg.providers[i].pathPrefix = '';
+    else delete cfg.providers[i].pathPrefix;
+  });
+  providerNames = cfg.providers.map((p) => p.name);
+
+  document.querySelectorAll('#routingRows input, #routingRows select').forEach((inp) => {
+    const i = inp.dataset.r, f = inp.dataset.f;
+    if (i !== undefined && cfg.modelRouting[i]) cfg.modelRouting[i][f] = inp.value;
+  });
+
+  document.querySelectorAll('#groupsContainer input, #groupsContainer select').forEach((inp) => {
+    const group = inp.dataset.group, ci = inp.dataset.ci, f = inp.dataset.f;
+    if (group !== undefined && cfg.modelGroups[group] && cfg.modelGroups[group][ci]) {
+      cfg.modelGroups[group][ci][f] = f === 'weight' ? Number(inp.value) : inp.value;
+    }
+  });
+
+  cfg.retryStatusCodes = document.getElementById('retryStatusCodes').value.split(',').map((s) => parseInt(s.trim())).filter((n) => !isNaN(n));
+  cfg.autoDisableStatusCodes = document.getElementById('autoDisableStatusCodes').value.split(',').map((s) => parseInt(s.trim())).filter((n) => !isNaN(n));
+  cfg.autoDisableMode = document.getElementById('autoDisableMode').value;
+  cfg.autoDisableHours = Number(document.getElementById('autoDisableHours').value) || 24;
+  cfg.autoDisableResetHour = Number(document.getElementById('autoDisableResetHour').value) || 0;
+  cfg.logRetentionDays = Number(document.getElementById('logRetentionDays').value) || 3;
+  const notifyUrl = document.getElementById('notifyUrl').value.trim();
+  cfg.notify = notifyUrl ? { url: notifyUrl } : {};
+}
+
+async function saveConfig() {
+  collectFromDom();
+  const btn = document.getElementById('saveBtn');
+  const original = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '保存中...'; }
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    const pg = data.purged || {};
+    banner('保存成功,已热加载' + (pg.logs || pg.disabled ? `,并清理了已删除模型的数据(${pg.logs || 0} 条记录${pg.disabled ? '、' + pg.disabled + ' 个禁用状态' : ''})` : ''), true);
+    if (btn) {
+      btn.textContent = '✓ 已保存';
+      btn.style.background = 'var(--ok)';
+      btn.style.borderColor = 'var(--ok)';
+      setTimeout(() => { btn.textContent = original; btn.style.background = ''; btn.style.borderColor = ''; btn.disabled = false; }, 1800);
+    }
+    loadState();
+  } catch (e) {
+    banner('保存失败: ' + e.message, false);
+    if (btn) {
+      btn.textContent = '✗ 保存失败';
+      btn.style.background = 'var(--err)';
+      btn.style.borderColor = 'var(--err)';
+      setTimeout(() => { btn.textContent = original; btn.style.background = ''; btn.style.borderColor = ''; btn.disabled = false; }, 2600);
+    }
+  }
+}
+
+async function purgeStale() {
+  if (!confirm('把配置里已经不存在的模型 / 渠道 / provider 留下的请求记录和禁用状态全部删除?\n(只清已删除的,现有渠道的数据不动。已保存的配置为准,请先保存。)')) return;
+  try {
+    const res = await fetch('/api/purge-stale', { method: 'POST', headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.status);
+    const pg = data.purged || {};
+    banner(pg.logs || pg.disabled ? `已清理 ${pg.logs || 0} 条记录、${pg.disabled || 0} 个禁用状态` : '没有需要清理的数据', true);
+    loadState();
+  } catch (e) {
+    banner('清理失败: ' + e.message, false);
+  }
+}
+
+async function runTest(providerName, model, resultElId) {
+  const el = document.getElementById(resultElId);
+  if (el) el.innerHTML = '<span class="small">测试中...</span>';
+  try {
+    const res = await fetch('/api/test-provider', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: providerName, model }),
+    });
+    const data = await res.json();
+    if (!res.ok && data.status === undefined) throw new Error(data.error || res.status);
+    const cls = data.ok ? 'ok' : 'err';
+    const label = data.ok ? `✓ ${data.status} · ${data.durationMs}ms` : `✗ ${data.status ?? '失败'}`;
+    const detail = esc((data.preview || data.error || '').toString().slice(0, 300));
+    if (el) el.innerHTML = `<span class="test-badge test-${cls}" title="${detail}">${label}</span>`;
+  } catch (e) {
+    if (el) el.innerHTML = `<span class="test-badge test-err" title="${esc(e.message)}">✗ ${esc(e.message)}</span>`;
+  }
+}
+
+async function testProvider(i) {
+  const p = cfg.providers[i];
+  collectFromDom();
+  const modelKey = 'test-model:' + p.name;
+  let model = localStorage.getItem(modelKey) || '';
+  if (!model) {
+    model = prompt(`用哪个 model 测试 "${p.name}"?(会记住,以后不用再填)`);
+    if (!model) return;
+  }
+  localStorage.setItem(modelKey, model);
+  await saveConfig();
+  await runTest(p.name, model, 'test-result-provider-' + i);
+}
+
+async function testChannel(group, ci) {
+  collectFromDom();
+  const c = cfg.modelGroups[group][ci];
+  if (!c.model) { alert('先填一个真实 Model 再测试'); return; }
+  await saveConfig();
+  await runTest(c.provider, c.model, 'test-result-channel-' + idSafe(group) + '-' + ci);
+}
+
+async function testNotify() {
+  const notifyUrl = document.getElementById('notifyUrl').value.trim();
+  if (!notifyUrl) { banner('请先填写 ntfy 地址', false); return; }
+  try {
+    const res = await fetch('/api/notify-test', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: notifyUrl }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || JSON.stringify(data));
+    banner(`已发送,ntfy 返回状态码 ${data.upstreamStatus}`, data.ok);
+  } catch (e) {
+    banner('测试失败: ' + e.message, false);
+  }
+}
+
+document.getElementById('adminKey').value = localStorage.getItem('llmproxy_admin_key') || '';
+keyState();
+applyTheme();
+renderAppearance(document.getElementById('apBox'));
+showTab(['ch', 'pol', 'ap'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'ch');
+loadConfig();
+loadState();
+setInterval(loadState, 5000);
+</script>
+</body>
+</html>

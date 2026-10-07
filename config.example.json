@@ -1,0 +1,95 @@
+{
+  "providers": [
+    {
+      "name": "openai",
+      "baseUrl": "https://api.openai.com",
+      "apiKey": "sk-your-openai-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    {
+      "name": "step",
+      "baseUrl": "https://api.stepfun.com",
+      "apiKey": "your-stepfun-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    {
+      "name": "moonshot",
+      "baseUrl": "https://api.moonshot.cn",
+      "apiKey": "your-moonshot-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    {
+      "name": "qwen",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode",
+      "apiKey": "your-dashscope-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    {
+      "name": "zhipu",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "apiKey": "your-zhipu-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer ",
+      "pathPrefix": ""
+    },
+    {
+      "name": "deepseek",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": "your-deepseek-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    {
+      "name": "minimax",
+      "baseUrl": "https://api.minimaxi.com",
+      "apiKey": "your-minimax-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    {
+      "name": "openrouter",
+      "baseUrl": "https://openrouter.ai/api",
+      "apiKey": "your-openrouter-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    {
+      "name": "groq",
+      "baseUrl": "https://api.groq.com/openai",
+      "apiKey": "your-groq-key",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    }
+  ],
+
+  "modelRouting": [
+    { "prefix": "gpt-", "provider": "openai" }
+  ],
+
+  "modelGroups": {
+    "free-chat": [
+      { "provider": "zhipu", "model": "glm-4-flash", "weight": 3 },
+      { "provider": "moonshot", "model": "moonshot-v1-8k", "weight": 2 },
+      { "provider": "deepseek", "model": "deepseek-chat", "weight": 2 },
+      { "provider": "qwen", "model": "qwen-turbo", "weight": 1 },
+      { "provider": "openrouter", "model": "meta-llama/llama-3.1-8b-instruct:free", "weight": 1 }
+    ]
+  },
+
+  "retryStatusCodes": [403, 429, 500, 502, 503, 504],
+  "autoDisableStatusCodes": [403, 429],
+
+  "autoDisableMode": "hours",
+  "autoDisableHours": 24,
+  "autoDisableResetHour": 1,
+
+  "logRetentionDays": 3,
+
+  "notify": {
+    "url": "https://ntfy.8010252.xyz/notice"
+  }
+}

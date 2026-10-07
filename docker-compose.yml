@@ -1,0 +1,15 @@
+services:
+  llm-proxy:
+    build: .
+    container_name: llm-proxy
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      - PORT=8787
+      - GATEWAY_KEY=CHANGE_ME
+      - ADMIN_KEY=CHANGE_ME
+      - TZ=${TZ:-Asia/Shanghai}
+    volumes:
+      - ./config.json:/app/config.json
+      - ./logs:/app/logs

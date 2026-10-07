@@ -1,0 +1,6 @@
+node_modules
+logs
+config.json
+*.log
+.git
+npm-debug.log

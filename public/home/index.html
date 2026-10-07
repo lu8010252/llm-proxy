@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LLM 转发网关</title>
+<script src="/theme.js"></script>
+<style>
+  :root { --bg:#0a0a12; --surface:#14141f; --surface-2:#1b1b29; --border:#2a2a3d; --text:#eef0f7; --text-dim:#8b8ba8; --accent:#4fd8ff; --accent2:#b06bff; --ok:#3ee89a; --warn:#ffc857; --err:#ff5fa8; --radius:12px; --nav-bg:rgba(10,10,18,0.85); --tip-bg:rgba(27,27,41,.96); --hover:#232333; --g1:rgba(176,107,255,0.10); --g2:rgba(79,216,255,0.10); }
+  :root[data-theme="light"] { --bg:#f3f4f9; --surface:#ffffff; --surface-2:#eceef6; --border:#d5d9e8; --text:#1a1c2c; --text-dim:#5a5e7a; --accent:#0a8db5; --accent2:#7b3fe4; --ok:#0f9152; --warn:#a86e00; --err:#d02a78; --nav-bg:rgba(243,244,249,0.88); --tip-bg:rgba(255,255,255,.97); --hover:#e2e5f1; --g1:rgba(123,63,228,0.06); --g2:rgba(10,141,181,0.06); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: radial-gradient(circle at 15% 0%, var(--g1), transparent 40%), radial-gradient(circle at 85% 8%, var(--g2), transparent 40%), var(--bg); color: var(--text); font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft Yahei", sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+  .topnav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: var(--nav-bg); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; color: var(--text); }
+  .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px 2px rgba(62,232,154,0.5); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+  .nav-links { display: flex; gap: 2px; align-items: center; }
+  .nav-links a { padding: 6px 14px; border-radius: 999px; font-size: 13px; color: var(--text-dim); }
+  .nav-links a.active { color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent2)); font-weight: 600; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .nav-links a.active:hover { color: var(--bg); }
+  .theme-btn { margin-left: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim); border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .theme-btn:hover { color: var(--text); background: var(--hover); }
+  main { max-width: 960px; margin: 0 auto; padding: 22px 20px 80px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; }
+  .card h2 { margin: 0 0 14px; font-size: 13px; font-weight: 600; color: var(--text-dim); }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; gap: 10px; }
+  .card-head h2 { margin: 0; }
+  .card-head .updated { font-size: 12px; color: var(--text-dim); }
+  .chip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .chip { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); }
+  .chip-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .chip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .chip-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip-status { font-size: 11.5px; color: var(--text-dim); }
+  .chip-ok .chip-dot { background: var(--ok); box-shadow: 0 0 7px 1px rgba(62,232,154,.6); }
+  .chip-warn .chip-dot { background: var(--warn); box-shadow: 0 0 7px 1px rgba(255,200,87,.6); }
+  .small { font-size: 12px; color: var(--text-dim); }
+  .kpi-row { display: flex; flex-wrap: wrap; gap: 14px; }
+  .kpi { flex: 1; min-width: 120px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kpi-num { font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; font-size: 26px; font-weight: 700; line-height: 1; }
+  .kpi-label { font-size: 12px; color: var(--text-dim); margin-top: 7px; }
+  .kpi-cyan .kpi-num { color: var(--accent); }
+  .kpi-pink .kpi-num { color: var(--err); }
+  .kpi-purple .kpi-num { color: var(--accent2); }
+  .kpi-green .kpi-num { color: var(--ok); }
+  .log-row { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; cursor: pointer; }
+  .log-row:last-child { border-bottom: none; }
+  .log-row .line1 { display: flex; justify-content: space-between; gap: 10px; color: var(--text-dim); font-size: 11.5px; margin-bottom: 4px; }
+  .log-row .line2 { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  .log-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 11.5px; flex-shrink: 0; }
+  .badge-ok { background: rgba(62,232,154,.15); color: var(--ok); }
+  .badge-warn { background: rgba(255,200,87,.15); color: var(--warn); }
+  .badge-err { background: rgba(255,95,168,.15); color: var(--err); }
+  .seg { display: flex; gap: 2px; background: var(--surface-2); border-radius: 999px; padding: 2px; }
+  .seg button { background: transparent; border: none; color: var(--text-dim); font-size: 12px; padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+  .seg button.active { background: var(--bg); color: var(--text); }
+  .usage-row { margin-bottom: 12px; }
+  .usage-row:last-child { margin-bottom: 0; }
+  .usage-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; }
+  .usage-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .usage-count { font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; color: var(--text-dim); flex-shrink: 0; margin-left: 10px; }
+  .usage-bar { height: 5px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+  .usage-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+  .client-fail { color: var(--err); margin-left: 8px; }
+  .usage-bar-fill.is-client { background: linear-gradient(90deg, var(--accent2), var(--err)); }
+  .chart-legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
+  .legend-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+
+  /* 趋势图 */
+  .trend-stats { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 10px; }
+  .trend-stat { font-size: 11.5px; color: var(--text-dim); }
+  .trend-stat b { font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; font-size: 15px; font-weight: 700; color: var(--text); margin-left: 5px; }
+  .trend-stat.is-fail b { color: var(--err); }
+  .trend-hint { margin-left: auto; }
+  .trend-wrap { position: relative; }
+  #trendChart { display: block; width: 100%; touch-action: pan-y; cursor: crosshair; }
+  #trendChart .ax { fill: var(--text-dim); font-size: 10px; }
+  #trendChart .grid { stroke: var(--border); stroke-width: 1; }
+  #trendChart .avg-line { stroke: var(--accent2); stroke-width: 1; stroke-dasharray: 4 4; }
+  #trendChart .avg-txt { fill: var(--accent2); font-size: 10px; }
+  #trendChart .cross { stroke: var(--text-dim); stroke-width: 1; stroke-dasharray: 3 3; }
+  .trend-tip { position: absolute; top: 4px; left: 0; z-index: 5; min-width: 190px; max-width: 280px; padding: 10px 12px; background: var(--tip-bg); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; line-height: 1.6; pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+  .trend-tip.pinned { border-color: var(--accent); }
+  .trend-tip .tt-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .trend-tip .tt-ms { font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; font-size: 16px; font-weight: 700; }
+  .trend-tip .tt-row { display: flex; gap: 8px; }
+  .trend-tip .tt-k { color: var(--text-dim); flex-shrink: 0; }
+  .trend-tip .tt-v { word-break: break-all; }
+
+  /* 各模型延迟:固定四列,横条对齐 */
+  .mlat { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .mlat-title { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+  .mrow { display: grid; grid-template-columns: minmax(90px, 1.1fr) minmax(90px, 2fr) 70px 92px; gap: 14px; align-items: center; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; font-size: 13px; cursor: pointer; }
+  .mrow:hover { background: var(--surface-2); }
+  .mrow.sel { border-color: var(--accent); background: var(--surface-2); }
+  .m-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .m-bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+  .mrow:hover .m-bar, .mrow.sel .m-bar { background: var(--border); }
+  .m-bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+  .m-bar i.slow { background: var(--warn); }
+  .m-bar i.bad { background: var(--err); }
+  .m-avg { text-align: right; line-height: 1.25; font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; font-weight: 700; }
+  .m-avg small { display: block; font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif; font-weight: 400; font-size: 11px; color: var(--text-dim); }
+  .m-cnt { text-align: right; line-height: 1.25; font-size: 12px; color: var(--text-dim); }
+  .m-cnt em { display: block; font-style: normal; font-size: 11px; color: var(--err); }
+  .m-cnt em.w { color: var(--warn); }
+  .more-btn { display: block; margin: 6px auto 0; background: none; border: none; color: var(--accent); font-size: 12px; cursor: pointer; padding: 4px 10px; }
+  .clear-btn { background: var(--surface-2); border: 1px solid var(--accent); color: var(--text); border-radius: 999px; padding: 3px 12px; font-size: 12px; cursor: pointer; display: none; }
+
+  .authbox { display: flex; gap: 8px; }
+  .authbox input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .authbox button { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+  .authbox button:hover { background: var(--hover); }
+
+  @media (max-width: 640px) {
+    main { padding: 16px 12px 70px; }
+    .topnav { padding: 10px 14px; }
+    .nav-links a { padding: 6px 10px; }
+    .theme-btn .tb-tx { display: none; }
+    .kpi-row { gap: 10px; }
+    .trend-hint { display: none; }
+    .mrow { grid-template-columns: 1fr auto auto; gap: 6px 12px; }
+    .m-bar { grid-column: 1 / -1; grid-row: 2; }
+    .m-avg { grid-row: 1; grid-column: 2; }
+    .m-cnt { grid-row: 1; grid-column: 3; }
+  }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/"><span class="brand-dot"></span>LLM 转发网关</a>
+  <div class="nav-links">
+    <a href="/" class="active">首页</a>
+    <a href="/dashboard/">日志</a>
+    <a href="/admin/">配置</a>
+    <button class="theme-btn" id="themeBtn" onclick="cycleTheme()" title="切换 自动 / 浅色 / 深色">🌗</button>
+  </div>
+</nav>
+
+<main>
+  <section class="card">
+    <div class="card-head"><h2>渠道状态</h2><span class="updated" id="stateUpdated"></span></div>
+    <div id="authPrompt" style="display:none;">
+      <div class="small" style="margin-bottom:8px;">这台服务器设置了管理密钥,填一下才能看到渠道状态</div>
+      <div class="authbox">
+        <input id="adminKeyInput" type="password" placeholder="管理密钥" />
+        <button onclick="saveKeyAndLoad()">确定</button>
+      </div>
+    </div>
+    <div class="chip-grid" id="chipGrid"></div>
+    <div class="small" id="chipEmpty" style="display:none;">还没有配置任何分组渠道,去配置页添加一个吧</div>
+  </section>
+
+  <section class="card">
+    <div class="kpi-row" id="statRow"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 id="trendTitle">请求耗时趋势(最近 60 个请求,从左到右)</h2>
+      <button class="clear-btn" id="trendClear" onclick="pickModel(-1)">✕ 看全部模型</button>
+    </div>
+    <div class="trend-stats" id="trendStats"></div>
+    <div class="chart-legend">
+      <span><span class="legend-dot" style="background:var(--accent)"></span>成功</span>
+      <span><span class="legend-dot" style="background:var(--err)"></span>失败</span>
+      <span><span class="legend-dot" style="background:var(--accent2)"></span>平均耗时</span>
+      <span class="trend-hint">悬停查看详情,点击固定</span>
+    </div>
+    <div class="trend-wrap" id="trendWrap">
+      <svg id="trendChart" height="200"></svg>
+      <div class="trend-tip" id="trendTip" style="display:none;"></div>
+    </div>
+    <div class="small" id="trendEmpty" style="display:none;">暂无足够数据画图</div>
+
+    <div class="mlat" id="mlatBox" style="display:none;">
+      <div class="mlat-title">各模型延迟(最近 500 条请求,平均耗时慢的在前;点一行,上面的趋势图只看这个模型)</div>
+      <div id="modelLat"></div>
+      <button class="more-btn" id="mlatMore" onclick="toggleMore()" style="display:none;"></button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>模型使用情况</h2>
+      <div class="seg" id="usageSeg">
+        <button class="active" data-range="today" onclick="setUsageRange('today')">今天</button>
+        <button data-range="all" onclick="setUsageRange('all')">最近 500 条</button>
+      </div>
+    </div>
+    <div id="usageList"></div>
+    <div class="small" id="usageEmpty" style="display:none;">暂无数据</div>
+  </section>
+
+  <section class="card" id="clientCard" style="display:none;">
+    <div class="card-head">
+      <h2>调用方统计</h2>
+      <div class="seg" id="clientSeg">
+        <button class="active" data-range="today" onclick="setClientRange('today')">今天</button>
+        <button data-range="all" onclick="setClientRange('all')">最近 500 条</button>
+      </div>
+    </div>
+    <div id="clientList"></div>
+    <div class="small" id="clientEmpty" style="display:none;">暂无数据</div>
+  </section>
+
+  <section class="card">
+    <h2>最近请求</h2>
+    <div id="recentLog"></div>
+    <div style="margin-top: 12px;">
+      <a href="/dashboard/">查看完整日志</a>
+    </div>
+  </section>
+</main>
+
+<script>
+function authHeaders() {
+  const key = localStorage.getItem('llmproxy_admin_key') || '';
+  return key ? { Authorization: 'Bearer ' + key } : {};
+}
+function saveKeyAndLoad() {
+  localStorage.setItem('llmproxy_admin_key', document.getElementById('adminKeyInput').value.trim());
+  loadChannels();
+}
+function esc(s) {
+  return (s ?? '').toString().replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+function statusClass(s) {
+  if (!s) return 'err';
+  if (s < 300) return 'ok';
+  if (s < 500) return 'warn';
+  return 'err';
+}
+
+let allLogs = [];
+let usageRange = 'today';
+
+function setUsageRange(range) {
+  usageRange = range;
+  document.querySelectorAll('#usageSeg button').forEach((b) => b.classList.toggle('active', b.dataset.range === range));
+  renderUsage();
+}
+
+function renderUsage() {
+  const todayStr = new Date().toDateString();
+  const pool = usageRange === 'today' ? allLogs.filter((l) => new Date(l.time).toDateString() === todayStr) : allLogs;
+  const counts = {};
+  for (const l of pool) {
+    const name = l.model || '(未知)';
+    counts[name] = (counts[name] || 0) + 1;
+  }
+  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const max = rows.length ? rows[0][1] : 1;
+  document.getElementById('usageEmpty').style.display = rows.length ? 'none' : 'block';
+  document.getElementById('usageList').innerHTML = rows.map(([name, count]) => `
+    <div class="usage-row">
+      <div class="usage-top"><span class="usage-name">${esc(name)}</span><span class="usage-count">${count}</span></div>
+      <div class="usage-bar"><div class="usage-bar-fill" style="width:${Math.round((count / max) * 100)}%"></div></div>
+    </div>
+  `).join('');
+}
+
+// 分组转发一次请求可能试了多个渠道(多条日志),按 reqId 合并成一条:以最后一次尝试的结果为准
+function toRequests(logs) {
+  const map = new Map();
+  for (const l of logs) {
+    const id = l.reqId || l.id;
+    const prev = map.get(id);
+    if (!prev || (l.attempt || 0) >= (prev.attempt || 0)) map.set(id, l);
+  }
+  return [...map.values()];
+}
+
+let clientRange = 'today';
+function setClientRange(range) {
+  clientRange = range;
+  document.querySelectorAll('#clientSeg button').forEach((b) => b.classList.toggle('active', b.dataset.range === range));
+  renderClients();
+}
+let clientNames = [];
+function renderClients() {
+  const hasClient = clientNames.length > 0 || allLogs.some((l) => l.client);
+  document.getElementById('clientCard').style.display = hasClient ? 'block' : 'none';
+  if (!hasClient) return;
+  const todayStr = new Date().toDateString();
+  const reqs = toRequests(allLogs).filter((l) => clientRange === 'all' || new Date(l.time).toDateString() === todayStr);
+  const stats = {};
+  for (const n of clientNames) stats[n] = { count: 0, fail: 0 };
+  for (const l of reqs) {
+    const name = l.client || '(未知)';
+    const st = stats[name] || (stats[name] = { count: 0, fail: 0 });
+    st.count++;
+    if (!l.status || l.status >= 400) st.fail++;
+  }
+  const rows = Object.entries(stats).sort((a, b) => b[1].count - a[1].count);
+  const max = Math.max(rows.length ? rows[0][1].count : 1, 1);
+  document.getElementById('clientEmpty').style.display = rows.length ? 'none' : 'block';
+  document.getElementById('clientList').innerHTML = rows.map(([name, st]) => `
+    <div class="usage-row">
+      <div class="usage-top"><span class="usage-name">${esc(name)}</span><span class="usage-count">${st.count} 次${st.fail ? `<span class="client-fail">失败 ${st.fail}</span>` : ''}</span></div>
+      <div class="usage-bar"><div class="usage-bar-fill is-client" style="width:${Math.round((st.count / max) * 100)}%"></div></div>
+    </div>
+  `).join('');
+}
+
+// ---------- 趋势图(可交互) + 模型延迟 ----------
+const TREND_N = 60;
+const MLAT_SHOW = 8;
+const TR = { pts: [], geo: null, sig: '', pinned: null, model: null, models: [], expand: false };
+
+function fmtMs(n) {
+  n = Math.round(n);
+  return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 's' : n + 'ms';
+}
+function niceMax(v) {
+  const p = Math.pow(10, Math.floor(Math.log10(Math.max(v, 1))));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+
+// 各模型延迟:按请求合并后,按模型算 平均 / P95 / 次数 / 失败数,慢的排前面
+function renderModelLatency() {
+  const reqs = toRequests(allLogs);
+  const by = {};
+  let total = 0;
+  for (const l of reqs) {
+    const n = l.model || '(未知)';
+    const s = by[n] || (by[n] = { n, ms: [], fail: 0 });
+    const d = l.durationMs ?? 0;
+    s.ms.push(d); total += d;
+    if (!l.status || l.status >= 400) s.fail++;
+  }
+  const allAvg = reqs.length ? total / reqs.length : 0;
+  const rows = Object.values(by).map((s) => {
+    const q = [...s.ms].sort((a, b) => a - b);
+    return { n: s.n, c: s.ms.length, fail: s.fail, avg: s.ms.reduce((a, b) => a + b, 0) / s.ms.length, p95: q[Math.min(q.length - 1, Math.ceil(q.length * 0.95) - 1)] };
+  }).sort((a, b) => b.avg - a.avg);
+  TR.models = rows.map((r) => r.n);
+  document.getElementById('mlatBox').style.display = rows.length ? 'block' : 'none';
+  const maxAvg = Math.max(...rows.map((r) => r.avg), 1);
+  const shown = TR.expand ? rows : rows.filter((r, i) => i < MLAT_SHOW || r.n === TR.model);
+  document.getElementById('modelLat').innerHTML = shown.map((r) => {
+    const i = TR.models.indexOf(r.n);
+    const slow = r.c >= 3 && r.avg > allAvg * 1.5;
+    const failHigh = r.c >= 3 && r.fail / r.c >= 0.2;
+    const cls = failHigh ? 'bad' : slow ? 'slow' : '';
+    return `<div class="mrow${TR.model === r.n ? ' sel' : ''}" onclick="pickModel(${i})" title="点击只看这个模型的趋势">
+      <span class="m-name">${esc(r.n)}</span>
+      <span class="m-bar"><i class="${cls}" style="width:${Math.max(2, Math.round((r.avg / maxAvg) * 100))}%"></i></span>
+      <span class="m-avg">${fmtMs(r.avg)}<small>P95 ${fmtMs(r.p95)}</small></span>
+      <span class="m-cnt">${r.c} 次${r.fail ? `<em>失败 ${r.fail}</em>` : ''}${slow ? '<em class="w">偏慢</em>' : ''}</span>
+    </div>`;
+  }).join('');
+  const more = document.getElementById('mlatMore');
+  more.style.display = rows.length > MLAT_SHOW ? 'block' : 'none';
+  more.textContent = TR.expand ? '收起' : `展开全部 ${rows.length} 个模型`;
+}
+function toggleMore() { TR.expand = !TR.expand; renderModelLatency(); }
+
+function pickModel(i) {
+  const n = i >= 0 ? TR.models[i] : null;
+  TR.model = (n && TR.model !== n) ? n : null;
+  TR.pinned = null; TR.sig = '';
+  document.getElementById('trendTip').style.display = 'none';
+  renderTrendChart();
+  renderModelLatency();
+}
+
+function renderTrendChart() {
+  const svg = document.getElementById('trendChart');
+  const wrap = document.getElementById('trendWrap');
+  const statsEl = document.getElementById('trendStats');
+
+  document.getElementById('trendTitle').textContent = TR.model
+    ? `${TR.model} · 耗时趋势(最近 ${TREND_N} 个请求)`
+    : `请求耗时趋势(最近 ${TREND_N} 个请求,从左到右)`;
+  document.getElementById('trendClear').style.display = TR.model ? 'inline-block' : 'none';
+
+  // allLogs 最新在前;选了模型就只看该模型;按请求合并后取最近 N 个,再翻成时间正序
+  const counts = new Map();
+  for (const l of allLogs) { const k = l.reqId || l.id; counts.set(k, (counts.get(k) || 0) + 1); }
+  const src = TR.model ? allLogs.filter((l) => (l.model || '(未知)') === TR.model) : allLogs;
+  const pts = toRequests(src).slice(0, TREND_N).reverse().map((l) => ({
+    l,
+    key: l.reqId || l.id || l.time,
+    ms: l.durationMs ?? 0,
+    fail: !l.status || l.status >= 400,
+    tries: counts.get(l.reqId || l.id) || 1,
+  }));
+
+  const empty = pts.length < 2;
+  document.getElementById('trendEmpty').style.display = empty ? 'block' : 'none';
+  wrap.style.display = empty ? 'none' : 'block';
+  statsEl.style.display = empty ? 'none' : 'flex';
+  if (empty) { svg.innerHTML = ''; TR.sig = ''; TR.pts = []; return; }
+
+  const W = Math.max(wrap.clientWidth || 600, 280), H = 200;
+  const sig = W + '|' + (TR.model || '') + '|' + pts.map((p) => p.key + ':' + p.ms + ':' + (p.l.status || 0) + ':' + p.tries).join(',');
+  if (sig === TR.sig) return; // 数据和宽度都没变,不重绘,免得打断悬停
+  TR.sig = sig;
+  TR.pts = pts;
+
+  const L = 46, R = 12, T = 14, B = 24;
+  const pw = W - L - R, ph = H - T - B;
+  const ms = pts.map((p) => p.ms);
+  const dataMax = Math.max(...ms, 1);
+  const avg = ms.reduce((a, b) => a + b, 0) / ms.length;
+  const sorted = [...ms].sort((a, b) => a - b);
+  const p95 = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
+  const fails = pts.filter((p) => p.fail).length;
+  const top = niceMax(dataMax);
+  const stepX = pw / (pts.length - 1);
+  const X = (i) => L + i * stepX;
+  const Y = (v) => T + ph - (v / top) * ph;
+  const coords = pts.map((p, i) => ({ x: X(i), y: Y(p.ms) }));
+  TR.geo = { W, H, L, T, B, stepX, coords };
+
+  statsEl.innerHTML = `
+    <span class="trend-stat">样本<b>${pts.length}</b></span>
+    <span class="trend-stat">平均<b>${fmtMs(avg)}</b></span>
+    <span class="trend-stat">P95<b>${fmtMs(p95)}</b></span>
+    <span class="trend-stat">最大<b>${fmtMs(dataMax)}</b></span>
+    <span class="trend-stat ${fails ? 'is-fail' : ''}">失败<b>${fails}</b></span>`;
+
+  let grid = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = (top / 4) * i, y = Y(v);
+    grid += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/>` +
+            `<text class="ax" x="${L - 6}" y="${(y + 3.5).toFixed(1)}" text-anchor="end">${fmtMs(v)}</text>`;
+  }
+  const tl = (p) => new Date(p.l.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const mid = Math.floor((pts.length - 1) / 2);
+  const xlab = [[0, 'start'], [mid, 'middle'], [pts.length - 1, 'end']]
+    .map(([i, a]) => `<text class="ax" x="${X(i).toFixed(1)}" y="${H - 6}" text-anchor="${a}">${tl(pts[i])}</text>`).join('');
+
+  const linePts = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+  const areaPts = `${L},${T + ph} ${linePts} ${W - R},${T + ph}`;
+  const dots = coords.map((c, i) => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${pts[i].fail ? 3.6 : 2}" fill="${pts[i].fail ? 'var(--err)' : 'var(--accent)'}"/>`).join('');
+  const ya = Y(avg);
+  const mi = ms.indexOf(dataMax);
+  const maxLabel = `<text class="ax" x="${Math.min(Math.max(coords[mi].x, L + 24), W - R - 24).toFixed(1)}" y="${Math.max(coords[mi].y - 7, 10).toFixed(1)}" text-anchor="middle" style="fill:var(--text)">最大 ${fmtMs(dataMax)}</text>`;
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', W);
+  svg.innerHTML = `
+    <defs><linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" style="stop-color:var(--accent);stop-opacity:0.30"/><stop offset="100%" style="stop-color:var(--accent);stop-opacity:0"/>
+    </linearGradient></defs>
+    ${grid}
+    <polygon points="${areaPts}" fill="url(#trendGrad)"/>
+    <line class="avg-line" x1="${L}" x2="${W - R}" y1="${ya.toFixed(1)}" y2="${ya.toFixed(1)}"/>
+    <text class="avg-txt" x="${W - R - 2}" y="${(ya - 4).toFixed(1)}" text-anchor="end">平均 ${fmtMs(avg)}</text>
+    <polyline points="${linePts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    ${dots}${maxLabel}${xlab}
+    <line class="cross" id="tLine" y1="${T}" y2="${T + ph}" style="display:none"/>
+    <circle id="tDot" r="5" stroke="var(--bg)" stroke-width="2" style="display:none"/>`;
+
+  // 重绘后恢复已固定的点
+  if (TR.pinned != null) {
+    const i = pts.findIndex((p) => p.key === TR.pinned);
+    if (i >= 0) trendShow(i, true); else { TR.pinned = null; trendHide(); }
+  }
+}
+
+function trendShow(i, pinned) {
+  const g = TR.geo, p = TR.pts[i];
+  if (!g || !p) return;
+  const c = g.coords[i], l = p.l;
+  const line = document.getElementById('tLine'), dot = document.getElementById('tDot');
+  line.setAttribute('x1', c.x); line.setAttribute('x2', c.x); line.style.display = '';
+  dot.setAttribute('cx', c.x); dot.setAttribute('cy', c.y);
+  dot.setAttribute('fill', p.fail ? 'var(--err)' : 'var(--accent)'); dot.style.display = '';
+
+  const cls = statusClass(l.status);
+  const who = l.group ? `${l.group} → ${l.provider}` : (l.provider || '-');
+  const row = (k, v) => v ? `<div class="tt-row"><span class="tt-k">${k}</span><span class="tt-v">${esc(v)}</span></div>` : '';
+  const tip = document.getElementById('trendTip');
+  tip.className = 'trend-tip' + (pinned ? ' pinned' : '');
+  tip.innerHTML = `
+    <div class="tt-head"><span class="tt-ms">${fmtMs(p.ms)}</span><span class="badge badge-${cls}">${l.status ?? '-'}</span></div>
+    ${row('时间', new Date(l.time).toLocaleString())}
+    ${row('模型', l.model)}
+    ${row('渠道', who + (p.tries > 1 ? `(共尝试 ${p.tries} 个渠道)` : ''))}
+    ${row('调用方', l.client)}
+    ${row('路径', l.path || l.url)}`;
+  tip.style.display = 'block';
+  const r = document.getElementById('trendChart').getBoundingClientRect();
+  const px = c.x * (r.width / g.W);
+  const tw = tip.offsetWidth, ww = document.getElementById('trendWrap').clientWidth;
+  tip.style.left = Math.max(0, Math.min(px - tw / 2, ww - tw)) + 'px';
+}
+function trendHide() {
+  if (TR.pinned != null) return;
+  document.getElementById('tLine')?.style.setProperty('display', 'none');
+  document.getElementById('tDot')?.style.setProperty('display', 'none');
+  document.getElementById('trendTip').style.display = 'none';
+}
+function trendIndex(e) {
+  const g = TR.geo, r = document.getElementById('trendChart').getBoundingClientRect();
+  const x = (e.clientX - r.left) * (g.W / r.width);
+  return Math.max(0, Math.min(TR.pts.length - 1, Math.round((x - g.L) / g.stepX)));
+}
+(function bindTrend() {
+  const svg = document.getElementById('trendChart');
+  svg.addEventListener('pointermove', (e) => { if (TR.geo && TR.pinned == null) trendShow(trendIndex(e), false); });
+  svg.addEventListener('pointerleave', () => trendHide());
+  svg.addEventListener('click', (e) => {
+    if (!TR.geo) return;
+    const i = trendIndex(e);
+    if (TR.pinned != null) { TR.pinned = null; trendShow(i, false); }
+    else { TR.pinned = TR.pts[i].key; trendShow(i, true); }
+  });
+  let raf = 0;
+  window.addEventListener('resize', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(renderTrendChart); });
+})();
+
+async function loadRecentAndStats() {
+  try {
+    const res = await fetch('/api/logs', { headers: authHeaders() });
+    allLogs = res.ok ? await res.json() : [];
+    const todayStr = new Date().toDateString();
+    const todayLogs = toRequests(allLogs).filter((l) => new Date(l.time).toDateString() === todayStr);
+    const todayFail = todayLogs.filter((l) => !l.status || l.status >= 400).length;
+
+    document.getElementById('recentLog').innerHTML = allLogs.slice(0, 8).map((l) => {
+      const cls = statusClass(l.status);
+      const who = l.group ? `${l.group} → ${l.provider}` : (l.provider || '-');
+      return `<div class="log-row">
+        <div class="line1"><span>${new Date(l.time).toLocaleTimeString()}</span><span>${l.durationMs ?? '-'}ms</span></div>
+        <div class="line2"><span class="path">${esc(who)}</span><span class="badge badge-${cls}">${l.status ?? '-'}</span></div>
+      </div>`;
+    }).join('') || '<div class="small">暂无请求记录</div>';
+
+    renderUsage();
+    renderClients();
+    renderModelLatency();
+    renderTrendChart();
+    return { todayCount: todayLogs.length, todayFail };
+  } catch {
+    return { todayCount: 0, todayFail: 0 };
+  }
+}
+
+async function loadChannels() {
+  document.getElementById('authPrompt').style.display = 'none';
+  try {
+    const [cfgRes, stateRes] = await Promise.all([
+      fetch('/api/config', { headers: authHeaders() }),
+      fetch('/api/state', { headers: authHeaders() }),
+    ]);
+    if (cfgRes.status === 401 || stateRes.status === 401) {
+      document.getElementById('authPrompt').style.display = 'block';
+      document.getElementById('chipGrid').innerHTML = '';
+      return { providerCount: 0, groupCount: 0 };
+    }
+    const cfg = await cfgRes.json();
+    const st = await stateRes.json();
+    const groups = cfg.modelGroups || {};
+    const disabled = st.disabled || {};
+    clientNames = st.clients || [];
+
+    const chips = [];
+    for (const [groupName, channels] of Object.entries(groups)) {
+      for (const c of channels) {
+        const key = `${groupName}::${c.provider}::${c.model || ''}`;
+        const d = disabled[key];
+        chips.push({ name: c.provider, group: groupName, disabled: d });
+      }
+    }
+    document.getElementById('chipEmpty').style.display = chips.length ? 'none' : 'block';
+    document.getElementById('chipGrid').innerHTML = chips.map((c) => {
+      if (c.disabled) {
+        return `<div class="chip chip-warn"><div class="chip-top"><span class="chip-dot"></span><span class="chip-name">${esc(c.name)}</span></div><div class="chip-status">${new Date(c.disabled.until).toLocaleString()} 恢复</div></div>`;
+      }
+      return `<div class="chip chip-ok"><div class="chip-top"><span class="chip-dot"></span><span class="chip-name">${esc(c.name)}</span></div><div class="chip-status">可用</div></div>`;
+    }).join('');
+
+    document.getElementById('stateUpdated').textContent = new Date().toLocaleTimeString();
+    return { providerCount: (cfg.providers || []).length, groupCount: Object.keys(groups).length };
+  } catch {
+    return { providerCount: 0, groupCount: 0 };
+  }
+}
+
+async function refreshAll() {
+  const [logStats, chanStats] = await Promise.all([loadRecentAndStats(), loadChannels()]);
+  renderClients();
+  document.getElementById('statRow').innerHTML = `
+    <div class="kpi kpi-cyan"><div class="kpi-num">${logStats.todayCount}</div><div class="kpi-label">今天请求</div></div>
+    <div class="kpi kpi-pink"><div class="kpi-num">${logStats.todayFail}</div><div class="kpi-label">今天失败</div></div>
+    <div class="kpi kpi-purple"><div class="kpi-num">${chanStats.providerCount}</div><div class="kpi-label">Providers</div></div>
+    <div class="kpi kpi-green"><div class="kpi-num">${chanStats.groupCount}</div><div class="kpi-label">分组</div></div>
+  `;
+}
+
+document.getElementById('adminKeyInput')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKeyAndLoad(); });
+refreshAll();
+setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>

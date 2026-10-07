@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LLM 转发网关 · 日志</title>
+<script src="/theme.js"></script>
+<style>
+  :root {
+    --bg: #0a0a12;
+    --surface: #14141f;
+    --surface-2: #1b1b29;
+    --border: #2a2a3d;
+    --text: #eef0f7;
+    --text-dim: #8b8ba8;
+    --accent: #4fd8ff;
+    --accent2: #b06bff;
+    --ok: #3ee89a;
+    --warn: #ffc857;
+    --err: #ff5fa8;
+    --radius: 12px;
+    --nav-bg: rgba(10,10,18,0.85);
+    --on-accent: #0a0a12;
+    --g1: rgba(176,107,255,0.10);
+    --g2: rgba(79,216,255,0.10);
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f5fa;
+    --surface: #ffffff;
+    --surface-2: #eef0f6;
+    --border: #d8dbe8;
+    --text: #1b1d2a;
+    --text-dim: #667085;
+    --accent: #0284c7;
+    --accent2: #7c3aed;
+    --ok: #059669;
+    --warn: #b7791f;
+    --err: #dc2626;
+    --nav-bg: rgba(255,255,255,0.88);
+    --on-accent: #ffffff;
+    --g1: rgba(124,58,237,0.06);
+    --g2: rgba(2,132,199,0.06);
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(circle at 15% 0%, var(--g1), transparent 40%),
+      radial-gradient(circle at 85% 8%, var(--g2), transparent 40%),
+      var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft Yahei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+
+  .topnav {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px;
+    background: var(--nav-bg);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; color: var(--text); }
+  .brand-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px 2px rgba(62,232,154,0.5); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+  .nav-right { display: flex; align-items: center; gap: 8px; }
+  .nav-links { display: flex; gap: 2px; }
+  .nav-links a { padding: 6px 14px; border-radius: 999px; font-size: 13px; color: var(--text-dim); }
+  .nav-links a.active { color: var(--on-accent); background: linear-gradient(135deg, var(--accent), var(--accent2)); font-weight: 600; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .nav-links a.active:hover { color: var(--on-accent); }
+  #themeBtn {
+    background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border);
+    padding: 5px 11px; border-radius: 999px; font-size: 12px; font-family: inherit; cursor: pointer; white-space: nowrap;
+  }
+  #themeBtn:hover { color: var(--text); border-color: var(--accent); }
+
+  main { max-width: 960px; margin: 0 auto; padding: 22px 20px 80px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+  .card-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-dim); }
+  .card-head .updated { font-size: 12px; color: var(--text-dim); }
+
+  /* 筛选栏 */
+  .filters { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .frow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .frow + .frow { margin-top: 8px; }
+  .filters select, .filters input[type=search], .filters button {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 8px; font-size: 12.5px; font-family: inherit; max-width: 100%;
+  }
+  .filters select.on { border-color: var(--accent); }
+  .filters input[type=search] { flex: 1; min-width: 160px; }
+  .filters input:focus, .filters select:focus, .filters button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .filters button { cursor: pointer; color: var(--text-dim); }
+  .filters button:hover { color: var(--text); }
+  .filters label { font-size: 12.5px; color: var(--text-dim); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+
+  .log-row { padding: 11px 4px 11px 8px; border-bottom: 1px solid var(--border); border-left: 3px solid transparent; font-size: 13px; cursor: pointer; border-radius: 6px; }
+  .log-row.failed { border-left-color: var(--err); }
+  .log-row:last-child { border-bottom: none; }
+  .log-row:hover { background: var(--surface-2); }
+  .log-row .line1 { display: flex; justify-content: space-between; gap: 10px; color: var(--text-dim); font-size: 11.5px; margin-bottom: 4px; }
+  .log-row .line1 span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-row .line1 .slow { color: var(--warn); flex-shrink: 0; }
+  .log-row .line1 span:last-child { flex-shrink: 0; }
+  .log-row .line2 { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+  .log-row .line3 { margin-top: 4px; font-size: 11.5px; color: var(--err); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .retry { color: var(--warn); font-size: 11.5px; margin-left: 6px; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 11.5px; flex-shrink: 0; }
+  .badge-ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+  .badge-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+  .badge-err { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
+  .small { font-size: 12px; color: var(--text-dim); }
+  .more { text-align: center; padding-top: 12px; }
+  .more button { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px 18px; font-size: 12.5px; cursor: pointer; }
+  .more button:hover { border-color: var(--accent); }
+
+  #detail {
+    position: fixed; right: 0; top: 0; bottom: 0; width: 420px; max-width: 100vw;
+    background: var(--surface); border-left: 1px solid var(--border); padding: 18px;
+    overflow: auto; display: none; z-index: 30;
+  }
+  #detail h3 { margin: 0 0 12px; font-size: 14px; }
+  #detail pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; background: var(--bg); padding: 12px; border-radius: 8px; }
+  .close { float: right; cursor: pointer; color: var(--text-dim); font-size: 13px; margin-left: 12px; }
+  .close:hover { color: var(--text); }
+  #mask { position: fixed; inset: 0; z-index: 25; display: none; }
+
+  @media (max-width: 640px) {
+    main { padding: 16px 12px 70px; }
+    .topnav { padding: 10px 14px; }
+    .nav-links a { padding: 6px 10px; }
+    #detail { width: 100vw; }
+    .filters select { flex: 1 1 30%; }
+  }
+</style>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/"><span class="brand-dot"></span>LLM 转发网关</a>
+  <div class="nav-right">
+    <div class="nav-links">
+      <a href="/">首页</a>
+      <a href="/dashboard/" class="active">日志</a>
+      <a href="/admin/">配置</a>
+    </div>
+    <button id="themeBtn" type="button" onclick="cycleTheme()" title="切换 自动 / 浅色 / 深色">🌗 自动</button>
+  </div>
+</nav>
+
+<main>
+  <div class="card">
+    <div class="card-head"><h2>请求日志</h2><span class="updated" id="status">加载中...</span></div>
+
+    <div class="filters">
+      <div class="frow">
+        <select id="f-range" title="时间范围">
+          <option value="all">全部时间</option>
+          <option value="15m">最近 15 分钟</option>
+          <option value="1h">最近 1 小时</option>
+          <option value="today">今天</option>
+        </select>
+        <select id="f-model" title="模型 / 分组"><option value="">全部模型</option></select>
+        <select id="f-provider" title="渠道"><option value="">全部渠道</option></select>
+        <select id="f-client" title="调用方"><option value="">全部调用方</option></select>
+        <select id="f-status" title="状态">
+          <option value="">全部状态</option>
+          <option value="ok">成功</option>
+          <option value="fail">失败</option>
+          <option value="4xx">4xx</option>
+          <option value="5xx">5xx / 网络错误</option>
+        </select>
+        <select id="f-dur" title="耗时">
+          <option value="0">不限耗时</option>
+          <option value="1000">耗时 &gt; 1s</option>
+          <option value="3000">耗时 &gt; 3s</option>
+          <option value="10000">耗时 &gt; 10s</option>
+        </select>
+        <select id="f-sort" title="排序">
+          <option value="time">按时间</option>
+          <option value="dur">按耗时降序</option>
+        </select>
+      </div>
+      <div class="frow">
+        <input type="search" id="f-q" placeholder="搜索路径 / reqId / 分组 / 模型 / 调用方 / 错误" />
+        <label><input type="checkbox" id="f-merge" /> 合并重试</label>
+        <button id="f-clear" type="button">清除筛选</button>
+      </div>
+    </div>
+
+    <div id="rows"></div>
+    <div class="more" id="more"></div>
+    <div class="small" id="empty-msg" style="display:none; padding: 20px 0; text-align:center;"></div>
+  </div>
+</main>
+
+<div id="mask" onclick="closeDetail()"></div>
+<div id="detail"><span class="close" onclick="closeDetail()">✕ 关闭</span><span class="close" id="copy-btn" onclick="copyDetail()">复制 JSON</span><h3>详情</h3><div id="detail-body"></div></div>
+
+<script>
+const KEY = 'llmproxy_log_filters';
+const DEF = { range: 'all', model: '', provider: '', client: '', status: '', dur: '0', sort: 'time', q: '', merge: true };
+const PAGE = 100;
+let F = { ...DEF }, logs = [], view = [], shown = PAGE, sig = '', optSig = '', detailData = null;
+
+function authHeaders() {
+  const key = localStorage.getItem('llmproxy_admin_key') || '';
+  return key ? { Authorization: 'Bearer ' + key } : {};
+}
+function esc(s) {
+  return (s ?? '').toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function statusClass(s) {
+  if (!s) return 'err';
+  if (s < 300) return 'ok';
+  if (s < 500) return 'warn';
+  return 'err';
+}
+const isFail = (s) => !s || s >= 400;
+
+/* ---------- 筛选条件:localStorage + URL 参数(如 ?status=fail&range=today) ---------- */
+function loadF() {
+  try { Object.assign(F, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch {}
+  const p = new URLSearchParams(location.search);
+  for (const k of Object.keys(DEF)) if (p.has(k)) F[k] = k === 'merge' ? p.get(k) !== '0' : p.get(k);
+}
+function saveF() { try { localStorage.setItem(KEY, JSON.stringify(F)); } catch {} }
+const ids = { range: 'f-range', model: 'f-model', provider: 'f-provider', client: 'f-client', status: 'f-status', dur: 'f-dur', sort: 'f-sort', q: 'f-q' };
+function syncUI() {
+  for (const [k, id] of Object.entries(ids)) {
+    const el = document.getElementById(id);
+    el.value = F[k];
+    if (el.tagName === 'SELECT') el.classList.toggle('on', F[k] !== DEF[k]);
+  }
+  document.getElementById('f-merge').checked = !!F.merge;
+}
+
+/* ---------- 下拉选项:只在选项集合变化时重建,避免轮询把展开的下拉框关掉 ---------- */
+function refreshOptions() {
+  const sets = { model: new Set(), provider: new Set(), client: new Set() };
+  for (const l of logs) {
+    if (l.model) sets.model.add(l.model);
+    if (l.group) sets.model.add(l.group);
+    if (l.provider) sets.provider.add(l.provider);
+    if (l.client) sets.client.add(l.client);
+  }
+  for (const k of Object.keys(sets)) if (F[k]) sets[k].add(F[k]); // 保证 URL/已存筛选值一直可选
+  const lists = {};
+  for (const k of Object.keys(sets)) lists[k] = [...sets[k]].sort();
+  const s = JSON.stringify(lists);
+  if (s === optSig) return;
+  optSig = s;
+  const first = { model: '全部模型', provider: '全部渠道', client: '全部调用方' };
+  for (const k of Object.keys(lists)) {
+    const el = document.getElementById(ids[k]);
+    el.innerHTML = `<option value="">${first[k]}</option>` + lists[k].map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    el.value = F[k];
+    el.classList.toggle('on', !!F[k]);
+  }
+}
+
+/* ---------- 合并重试:同一 reqId 的多次渠道尝试并成一条,以最后一次的结果为准 ---------- */
+function toItems() {
+  if (!F.merge) return logs.map((l) => ({ rep: l, attempts: [l], time: l.time, dur: l.durationMs }));
+  const map = new Map();
+  for (const l of logs) { // logs 是新→旧
+    const k = l.reqId || l.id;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(l);
+  }
+  return [...map.values()].map((arr) => {
+    arr = arr.slice().reverse(); // 旧→新
+    return { rep: arr[arr.length - 1], attempts: arr, time: arr[0].time, dur: arr.reduce((n, a) => n + (a.durationMs || 0), 0) };
+  });
+}
+function passes(it, since, minDur, q) {
+  const r = it.rep, s = r.status;
+  if (since && new Date(it.time).getTime() < since) return false;
+  if (F.model && !it.attempts.some((a) => a.model === F.model || a.group === F.model)) return false;
+  if (F.provider && !it.attempts.some((a) => a.provider === F.provider)) return false;
+  if (F.client && r.client !== F.client) return false;
+  if (F.status === 'ok' && isFail(s)) return false;
+  if (F.status === 'fail' && !isFail(s)) return false;
+  if (F.status === '4xx' && !(s >= 400 && s < 500)) return false;
+  if (F.status === '5xx' && !(s >= 500 || s === 0)) return false;
+  if (minDur && !(it.dur > minDur)) return false;
+  if (q) {
+    const text = it.attempts.map((a) => [a.path, a.reqId, a.id, a.group, a.model, a.actualModel, a.provider, a.client, a.error].join(' ')).join(' ').toLowerCase();
+    if (!text.includes(q)) return false;
+  }
+  return true;
+}
+
+function fmtTime(t) {
+  const d = new Date(t), n = new Date();
+  const same = d.toDateString() === n.toDateString();
+  return (same ? '' : `${d.getMonth() + 1}/${d.getDate()} `) + d.toLocaleTimeString();
+}
+function fmtDur(ms) {
+  if (ms == null) return '-';
+  return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+}
+
+function render() {
+  const all = toItems();
+  const since = { '15m': Date.now() - 15 * 60e3, '1h': Date.now() - 3600e3, today: new Date().setHours(0, 0, 0, 0) }[F.range] || 0;
+  const minDur = Number(F.dur) || 0, q = F.q.trim().toLowerCase();
+  view = all.filter((it) => passes(it, since, minDur, q));
+  if (F.sort === 'dur') view.sort((a, b) => (b.dur || 0) - (a.dur || 0));
+
+  const list = view.slice(0, shown);
+  document.getElementById('rows').innerHTML = list.map((it, i) => {
+    const l = it.rep, cls = statusClass(l.status), n = it.attempts.length;
+    const who = l.group
+      ? `${l.group} → ${l.provider}` + (!F.merge && l.totalChannels > 1 ? ` (${l.attempt}/${l.totalChannels})` : '')
+      : (l.provider || '-');
+    const model = l.model && l.model !== l.group ? ' · ' + esc(l.model) : '';
+    const slow = it.dur >= 3000 ? ' slow' : '';
+    return `<div class="log-row${isFail(l.status) ? ' failed' : ''}" onclick="showDetail(${i})">
+      <div class="line1"><span>${fmtTime(it.time)} · ${esc(l.method)}${l.client ? ' · ' + esc(l.client) : ''}${model}</span><span class="${slow.trim()}">${fmtDur(it.dur)}</span></div>
+      <div class="line2"><span class="path">${esc(l.path)} → ${esc(who)}${n > 1 ? `<span class="retry">重试 ×${n - 1}</span>` : ''}</span><span class="badge badge-${cls}">${l.status ?? '-'}</span></div>
+      ${l.error ? `<div class="line3">${esc(l.error)}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  const rest = view.length - list.length;
+  document.getElementById('more').innerHTML = rest > 0 ? `<button type="button" onclick="showMore()">显示更多(还有 ${rest} 条)</button>` : '';
+
+  const empty = document.getElementById('empty-msg');
+  if (!view.length) {
+    empty.style.display = 'block';
+    empty.innerHTML = all.length ? '没有符合筛选条件的记录 —— <a href="#" onclick="clearF();return false">清除筛选</a>' : '暂无请求记录 —— 调用一次接口试试';
+  } else empty.style.display = 'none';
+  setStatus(all.length);
+}
+function setStatus(total) {
+  const t = new Date().toLocaleTimeString();
+  const unit = F.merge ? '次请求' : '条';
+  document.getElementById('status').textContent = `筛选后 ${view.length} / 共 ${total} ${unit} · ${t}`;
+}
+function showMore() { shown += PAGE; render(); }
+
+/* ---------- 加载 ---------- */
+async function load() {
+  try {
+    const res = await fetch('/api/logs', { headers: authHeaders() });
+    if (res.status === 401) {
+      document.getElementById('status').textContent = '需要管理密钥:先去「配置」页填写并保存';
+      return;
+    }
+    const data = await res.json();
+    const s = data.length + '|' + (data[0] && data[0].id);
+    if (s === sig) { setStatus(toItems().length); return; } // 没有新数据:不重建 DOM,滚动位置和悬停不被打断
+    sig = s; logs = data;
+    refreshOptions();
+    render();
+  } catch (e) {
+    document.getElementById('status').textContent = '加载失败: ' + e.message;
+  }
+}
+
+/* ---------- 详情 ---------- */
+function showDetail(i) {
+  const it = view[i];
+  if (!it) return;
+  detailData = it.attempts.length > 1 ? it.attempts : it.attempts[0];
+  document.getElementById('detail-body').innerHTML = `<pre>${esc(JSON.stringify(detailData, null, 2))}</pre>`;
+  document.getElementById('detail').style.display = 'block';
+  document.getElementById('mask').style.display = 'block';
+  document.getElementById('copy-btn').textContent = '复制 JSON';
+}
+function closeDetail() {
+  document.getElementById('detail').style.display = 'none';
+  document.getElementById('mask').style.display = 'none';
+}
+async function copyDetail() {
+  const btn = document.getElementById('copy-btn');
+  try { await navigator.clipboard.writeText(JSON.stringify(detailData, null, 2)); btn.textContent = '已复制'; }
+  catch { btn.textContent = '复制失败'; }
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); });
+
+/* ---------- 事件 ---------- */
+function clearF() { F = { ...DEF }; shown = PAGE; saveF(); syncUI(); render(); }
+for (const [k, id] of Object.entries(ids)) {
+  document.getElementById(id).addEventListener(k === 'q' ? 'input' : 'change', (e) => {
+    F[k] = e.target.value; shown = PAGE; saveF();
+    if (e.target.tagName === 'SELECT') e.target.classList.toggle('on', F[k] !== DEF[k]);
+    render();
+  });
+}
+document.getElementById('f-merge').addEventListener('change', (e) => { F.merge = e.target.checked; shown = PAGE; saveF(); render(); });
+document.getElementById('f-clear').addEventListener('click', clearF);
+
+applyTheme(); // 按钮此时才存在,补一次文字
+loadF(); syncUI(); load();
+setInterval(() => { if (!document.hidden) load(); }, 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+</script>
+</body>
+</html>
