@@ -1,6 +1,6 @@
 services:
   llm-proxy:
-    build: .
+    image: ghcr.io/lu8010252/llm-proxy:latest
     container_name: llm-proxy
     restart: unless-stopped
     ports:
@@ -9,7 +9,8 @@ services:
       - PORT=8787
       - GATEWAY_KEY=CHANGE_ME
       - ADMIN_KEY=CHANGE_ME
+      - CONFIG_PATH=/app/data/config.json   # 首次启动自动生成,到网页「配置」页填 API Key
       - TZ=${TZ:-Asia/Shanghai}
     volumes:
-      - ./config.json:/app/config.json
+      - ./data:/app/data                   # 配置文件在这里(config.json)
       - ./logs:/app/logs

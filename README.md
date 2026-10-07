@@ -6,6 +6,18 @@
 
 ## 一、Docker 部署(推荐)
 
+### 方式 A:直接用镜像(不用下载源码)
+
+镜像由 GitHub Actions 自动构建,支持 amd64 / arm64 / armv7:`ghcr.io/lu8010252/llm-proxy:latest`
+
+1. 新建一个文件夹,把本仓库的 `docker-compose.yml` 内容保存进去(或在 1Panel「容器 → 编排」里直接粘贴)。
+2. 把 `GATEWAY_KEY`(调用方密钥)和 `ADMIN_KEY`(管理密钥)的 `CHANGE_ME` 改成自己的随机字符串。
+3. `docker compose up -d`。首次启动会在 `./data/config.json` 自动生成一份示例配置。
+4. 打开 `http://服务器IP:8787/admin/`,输入 ADMIN_KEY,在「配置」页面填入各家 API Key 并保存(热加载,不用重启)。
+5. 更新:`docker compose pull && docker compose up -d`。配置在 `./data`,日志在 `./logs`,更新不会丢。
+
+### 方式 B:下载源码本地构建
+
 ```bash
 # 1. 解压后进入目录
 cd llm-proxy
@@ -17,6 +29,7 @@ cp config.example.json config.json
 # 3. 启动
 docker compose up -d --build
 ```
+(本地构建时,先把 compose 里的 `image:` 一行换成 `build: .`,并把 `./data:/app/data` 与 `CONFIG_PATH` 两行换回 `./config.json:/app/config.json`。)
 
 启动后打开 `http://你的服务器IP:8787` 就是首页仪表盘,能看到渠道状态、今天的请求概况、最近的调用记录,顶部导航可以切到"日志"(完整历史)和"配置"(改 provider / 分组 / 策略)。不用再单独记 `/dashboard/`、`/admin/` 这些路径。
 
@@ -236,3 +249,8 @@ llm-proxy/
 ├── public/index.html       # 日志面板页面
 └── logs/app.log            # 持久化日志(启动后自动生成)
 ```
+
+## 镜像拉取失败
+- 提示 `unauthorized` / `not found`:镜像还是私有的。仓库所有者到 GitHub 个人主页 → Packages → 点开该镜像 →
+  Package settings → Change visibility 设为 Public(只需设置一次)。
+- 国内服务器拉 `ghcr.io` 很慢或超时:换用能访问 ghcr.io 的机器拉取后 `docker save` / `docker load`,或给 Docker 配置镜像加速/代理。

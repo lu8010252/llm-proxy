@@ -25,10 +25,21 @@ const GATEWAY_KEYS = GATEWAY_KEY_LIST.map((k) => k.key);
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
 
 // ---------- 加载配置 ----------
-const CONFIG_PATH = path.join(__dirname, "config.json");
+// 默认读 /app/config.json(老的部署方式:compose 里把 ./config.json 挂进来)。
+// 也可以设置环境变量 CONFIG_PATH(如 /app/data/config.json)并挂载整个目录;
+// 这时如果文件还不存在,会自动用镜像里自带的 config.example.json 生成一份,
+// 直接贴 compose 启动后,到「配置」页面填 API Key 即可。
+const CONFIG_PATH = process.env.CONFIG_PATH || path.join(__dirname, "config.json");
 if (!fs.existsSync(CONFIG_PATH)) {
-  console.error("找不到 config.json,请复制 config.example.json 为 config.json 并填写你的 API Key");
-  process.exit(1);
+  const example = path.join(__dirname, "config.example.json");
+  if (process.env.CONFIG_PATH && fs.existsSync(example)) {
+    fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+    fs.copyFileSync(example, CONFIG_PATH);
+    console.log("未找到 " + CONFIG_PATH + ",已用示例配置生成,请到「配置」页面填写 API Key");
+  } else {
+    console.error("找不到 config.json,请复制 config.example.json 为 config.json 并填写你的 API Key");
+    process.exit(1);
+  }
 }
 let config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
 const providers = {};
@@ -46,7 +57,7 @@ function reloadConfig() {
 }
 
 // ---------- 渠道禁用状态(持久化到 state.json,重启不丢失) ----------
-const STATE_PATH = path.join(__dirname, "state.json");
+const STATE_PATH = path.join(path.dirname(CONFIG_PATH), "state.json"); // 与配置同目录(老部署下仍是 /app/state.json)
 let state = { disabled: {} };
 function loadState() {
   try {

@@ -9,7 +9,7 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
 
-COPY server.js ./
+COPY server.js config.example.json ./
 COPY public ./public
 
 RUN mkdir -p logs
