@@ -51,6 +51,7 @@ function reloadConfig() {
     for (const key in providers) delete providers[key];
     for (const p of config.providers) providers[p.name] = p;
     fileLogger.info("config reloaded");
+    cleanupOldLogs(true); // 改了保留天数后立刻生效,不用等下一个整点
   } catch (e) {
     fileLogger.error({ err: e.message }, "reload config failed");
   }
@@ -144,25 +145,40 @@ function todayLogPath() {
   return path.join(LOGS_DIR, `app-${localDateStr()}.log`);
 }
 
+// 内存里的最近请求记录(首页 / 日志页的数据来源),放在清理函数前面声明,避免清理时访问到未初始化的变量
+const RING_SIZE = 500; // 内存里保留最近 500 条,给 /dashboard 用
+const ring = [];
+
+function retentionCutoff(now = Date.now()) {
+  const keepDays = Number(config.logRetentionDays);
+  return now - (keepDays > 0 ? keepDays : 3) * 24 * 3600 * 1000;
+}
+
 let lastCleanup = 0;
-function cleanupOldLogs() {
+// force=true 时忽略"一小时一次"的限制(启动时、保存配置后用)
+function cleanupOldLogs(force = false) {
   const now = Date.now();
-  if (now - lastCleanup < 3600 * 1000) return; // 最多一小时清理一次,避免每条日志都扫目录
+  if (force !== true && now - lastCleanup < 3600 * 1000) return; // 最多一小时清理一次,避免每条日志都扫目录
   lastCleanup = now;
   try {
-    const keepDays = config.logRetentionDays ?? 3;
-    const cutoff = now - keepDays * 24 * 3600 * 1000;
+    const cutoff = retentionCutoff(now);
+    // 1) 磁盘文件:整天都早于保留期限的才删(当天文件里可能还有期限内的记录)
     for (const f of fs.readdirSync(LOGS_DIR)) {
       const m = f.match(/^app-(\d{4})-(\d{2})-(\d{2})\.log$/);
       if (!m) continue;
-      const fileTime = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
-      if (fileTime < cutoff) {
+      const dayEnd = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1).getTime();
+      if (dayEnd <= cutoff) {
         try {
           fs.unlinkSync(path.join(LOGS_DIR, f));
         } catch {
           /* 单个文件删不掉不影响其他文件继续清理 */
         }
       }
+    }
+    // 2) 内存记录:按时间剔除超过保留期限的(首页/日志页看到的就是这份,以前只按条数淘汰,旧记录会一直挂着)
+    for (let i = ring.length - 1; i >= 0; i--) {
+      const t = Date.parse(ring[i].time);
+      if (t && t < cutoff) ring.splice(i, 1);
     }
   } catch {
     /* 清理失败不应该影响主流程 */
@@ -196,8 +212,6 @@ try {
   consoleLogger = pino(); // 回退,避免没装 pino-pretty 时崩掉
 }
 
-const RING_SIZE = 500; // 内存里保留最近 500 条,给 /dashboard 用
-const ring = [];
 function pushLog(entry) {
   ring.push(entry);
   if (ring.length > RING_SIZE) ring.shift();
@@ -211,6 +225,8 @@ function pushLog(entry) {
 // 启动时从磁盘日志恢复最近的请求记录,这样重启/重建容器后面板不会变成空白
 function restoreRecentLogs() {
   try {
+    cleanupOldLogs(true); // 先按保留天数清一遍旧文件,否则旧文件里的记录会被恢复回内存
+    const cutoff = retentionCutoff();
     const files = fs.readdirSync(LOGS_DIR).filter((f) => /^app-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort();
     const entries = [];
     for (const f of files) {
@@ -218,7 +234,7 @@ function restoreRecentLogs() {
         if (!line) continue;
         try {
           const obj = JSON.parse(line);
-          if (obj.method && obj.path && obj.time) entries.push(obj); // 只要请求记录,跳过"config reloaded"这类系统日志
+          if (obj.method && obj.path && obj.time && Date.parse(obj.time) >= cutoff) entries.push(obj); // 只要保留期内的请求记录,跳过"config reloaded"这类系统日志
         } catch {
           /* 跳过损坏的行 */
         }
