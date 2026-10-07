@@ -162,7 +162,7 @@ curl http://localhost:8787/v1/chat/completions \
 
 ```json
 "notify": {
-  "url": "https://ntfy.8010252.xyz/notice"
+  "url": "https://ntfy.example.com/你的主题"
 }
 ```
 

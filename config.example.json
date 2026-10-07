@@ -90,6 +90,6 @@
   "logRetentionDays": 3,
 
   "notify": {
-    "url": "https://ntfy.8010252.xyz/notice"
+    "url": ""
   }
 }
