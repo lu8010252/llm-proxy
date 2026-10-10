@@ -623,11 +623,11 @@ async function quotaCustom(p) {
 }
 
 // 阶跃星辰:控制台的额度接口(POST,body 为空对象)。是否支持用 API Key 鉴权我没法确认,
-// 不行的话在 provider 里加 "quota": {"headers": {"Oasis-Token": "浏览器登录后复制的值"}} 再试
+// 不行的话改用登录态:quota.headers 里放 Cookie: Oasis-Token=... 和 Oasis-Webid(见下方提示)
 async function quotaStepfun(p) {
   const q = p.quota || {};
   const url = q.url || "https://platform.stepfun.com/api/step.openapi.devcenter.Dashboard/QueryUserQuota";
-  const hint = ['这是阶跃控制台的接口,用 API Key 不一定能通。可在 provider 里加 "quota": {"headers": {"Oasis-Token": "登录控制台后从浏览器请求头复制"}} 再试;查不到时,下方「本渠道请求统计」是网关自己统计的用量。'];
+  const hint = ['这是阶跃控制台的接口,用 API Key 多半不通,控制台接口认的是登录态:需在 provider 里加 "quota": {"headers": {"Cookie": "Oasis-Token=浏览器里复制的值", "Oasis-Webid": "浏览器请求头里的值"}}(登录态会过期,等同密码,别外泄)。查不到时,下方「本渠道请求统计」是网关自己统计的用量。'];
   const r = await getJson(url, p, 8000, { method: "POST", body: q.body ?? {}, headers: q.headers });
   if (r.status >= 400 || !r.json) return { ok: false, error: `HTTP ${r.status} ${r.text.slice(0, 120)}`, notes: hint };
   const root = r.json.data && typeof r.json.data === "object" ? r.json.data : r.json;
