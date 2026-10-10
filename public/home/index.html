@@ -32,7 +32,37 @@
   .card-head h2 { margin: 0; }
   .card-head .updated { font-size: 12px; color: var(--text-dim); }
   .chip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-  .chip { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); }
+  .chip { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); cursor: pointer; transition: border-color .15s, background .15s; }
+  .chip:hover { border-color: var(--accent); background: var(--hover); }
+  .chip-quota { font-size: 11.5px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+  .chip-quota.dim { color: var(--text-dim); font-family: inherit; }
+  .qbar { height: 3px; background: var(--border); border-radius: 999px; overflow: hidden; margin-top: 5px; }
+  .qbar i { display: block; height: 100%; border-radius: 999px; background: var(--ok); }
+  .qbar i.mid { background: var(--warn); }
+  .qbar i.low { background: var(--err); }
+
+  /* 渠道详情弹窗 */
+  .modal-mask { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; padding: 16px; }
+  .modal-mask.open { display: flex; }
+  .modal { width: 100%; max-width: 520px; max-height: 86vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 12px 40px rgba(0,0,0,.4); }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .modal-title { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .modal-x { background: none; border: none; color: var(--text-dim); font-size: 18px; cursor: pointer; padding: 2px 6px; }
+  .modal-x:hover { color: var(--text); }
+  .modal-body { padding: 14px 18px 18px; overflow-y: auto; }
+  .msec { margin-bottom: 16px; }
+  .msec:last-child { margin-bottom: 0; }
+  .msec h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .kv { display: flex; justify-content: space-between; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .kv:last-child { border-bottom: none; }
+  .kv .k { color: var(--text-dim); flex-shrink: 0; }
+  .kv .v { text-align: right; word-break: break-all; }
+  .kv .v.mono { font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace; }
+  .mnote { font-size: 12px; line-height: 1.6; color: var(--text-dim); background: var(--surface-2); border-radius: 8px; padding: 8px 10px; margin-top: 8px; white-space: pre-wrap; word-break: break-all; }
+  .mnote.err { color: var(--err); }
+  .mbtn { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 3px 12px; font-size: 12px; cursor: pointer; }
+  .mbtn:hover { background: var(--hover); }
+  .mbtn[disabled] { opacity: .5; cursor: default; }
   .chip-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
   .chip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
   .chip-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -155,6 +185,7 @@
     </div>
     <div class="chip-grid" id="chipGrid"></div>
     <div class="small" id="chipEmpty" style="display:none;">还没有配置任何分组渠道,去配置页添加一个吧</div>
+    <div class="small" style="margin-top:10px;">点击任意渠道查看额度和详情</div>
   </section>
 
   <section class="card">
@@ -218,6 +249,13 @@
     </div>
   </section>
 </main>
+
+<div class="modal-mask" id="chModal" onclick="if(event.target===this)closeChannel()">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head"><span class="modal-title" id="chModalTitle"></span><button class="modal-x" onclick="closeChannel()" aria-label="关闭">✕</button></div>
+    <div class="modal-body" id="chModalBody"></div>
+  </div>
+</div>
 
 <script>
 function authHeaders() {
@@ -547,6 +585,140 @@ async function loadRecentAndStats() {
   }
 }
 
+// ---------- 渠道状态:额度 + 点击看详情 ----------
+let CH = [];
+let QUOTA = null;
+let quotaBusy = false;
+let modalIdx = null;
+
+async function loadQuota(force) {
+  if (quotaBusy) return;
+  quotaBusy = true;
+  if (modalIdx != null) renderModal();
+  try {
+    const r = await fetch('/api/quota' + (force ? '?refresh=1' : ''), { headers: authHeaders() });
+    if (r.ok) QUOTA = await r.json();
+  } catch { /* 查不到就保持旧数据 */ }
+  quotaBusy = false;
+  renderChips();
+}
+
+function chipQuotaHtml(name) {
+  if (!QUOTA) return '<div class="chip-quota dim">额度查询中…</div>';
+  const q = QUOTA[name];
+  if (!q) return '';
+  if (!q.ok) return `<div class="chip-quota dim" title="${esc(q.error || '')}">额度:查不到</div>`;
+  if (q.kind === 'none') return `<div class="chip-quota dim">${esc(q.summary)}</div>`;
+  const bar = q.pct != null ? `<div class="qbar"><i class="${q.pct < 0.1 ? 'low' : q.pct < 0.3 ? 'mid' : ''}" style="width:${Math.round(q.pct * 100)}%"></i></div>` : '';
+  return `<div class="chip-quota" title="${esc(q.summary)}">${esc(q.summary)}</div>${bar}`;
+}
+
+function renderChips() {
+  document.getElementById('chipEmpty').style.display = CH.length ? 'none' : 'block';
+  document.getElementById('chipGrid').innerHTML = CH.map((c, i) => {
+    const st = c.disabled ? `${new Date(c.disabled.until).toLocaleString()} 恢复` : '可用';
+    return `<div class="chip ${c.disabled ? 'chip-warn' : 'chip-ok'}" onclick="openChannel(${i})" title="点击查看详情">
+      <div class="chip-top"><span class="chip-dot"></span><span class="chip-name">${esc(c.name)}</span></div>
+      <div class="chip-status">${st}</div>${chipQuotaHtml(c.name)}</div>`;
+  }).join('');
+  if (modalIdx != null) renderModal();
+}
+
+// 这个渠道通过本网关实际发生的请求(来自最近 500 条日志)
+function channelStats(c) {
+  const todayStr = new Date().toDateString();
+  const mine = allLogs.filter((l) => l.group === c.group && l.provider === c.name && (!c.model || !l.model || l.model === c.model));
+  const isFail = (l) => !l.status || l.status >= 400;
+  const today = mine.filter((l) => new Date(l.time).toDateString() === todayStr);
+  return {
+    total: mine.length,
+    today: today.length,
+    fail: mine.filter(isFail).length,
+    failToday: today.filter(isFail).length,
+    avg: mine.length ? mine.reduce((s, l) => s + (l.durationMs || 0), 0) / mine.length : 0,
+    lastFail: mine.find(isFail) || null, // allLogs 最新在前
+  };
+}
+
+function kv(k, v, mono) { return `<div class="kv"><span class="k">${esc(k)}</span><span class="v${mono ? ' mono' : ''}">${v}</span></div>`; }
+
+function renderModal() {
+  const c = CH[modalIdx];
+  if (!c) { closeChannel(); return; }
+  const q = QUOTA && QUOTA[c.name];
+  const s = channelStats(c);
+  document.getElementById('chModalTitle').textContent = c.name + (c.model ? ' · ' + c.model : '');
+
+  let h = `<div class="msec"><h3>渠道状态</h3>`
+    + kv('分组', esc(c.group)) + kv('模型', esc(c.model || '(沿用请求里的模型名)')) + kv('权重', esc(c.weight))
+    + kv('状态', c.disabled ? `<span class="badge badge-warn">已禁用</span>` : `<span class="badge badge-ok">可用</span>`);
+  if (c.disabled) {
+    h += kv('恢复时间', esc(new Date(c.disabled.until).toLocaleString())) + kv('禁用原因', esc(c.disabled.reason || '-'));
+    if (c.disabled.disabledAt) h += kv('禁用时间', esc(new Date(c.disabled.disabledAt).toLocaleString()));
+    h += `<div style="margin-top:8px;"><button class="mbtn" onclick="enableCh(${modalIdx})">立即启用</button></div>`;
+  }
+  h += `</div>`;
+
+  h += `<div class="msec"><h3><span>额度</span><button class="mbtn" onclick="loadQuota(true)" ${quotaBusy ? 'disabled' : ''}>${quotaBusy ? '查询中…' : '刷新额度'}</button></h3>`;
+  if (!QUOTA) h += `<div class="small">查询中…</div>`;
+  else if (!q) h += `<div class="small">没有这个 provider 的额度信息</div>`;
+  else {
+    if (!q.ok) h += `<div class="mnote err">${esc(q.error || '查询失败')}</div>`;
+    for (const it of q.items || []) {
+      h += kv(it.label, esc(it.value), true);
+      if (it.pct != null) h += `<div class="qbar" style="margin:-2px 0 6px;"><i class="${it.pct < 0.1 ? 'low' : it.pct < 0.3 ? 'mid' : ''}" style="width:${Math.round(it.pct * 100)}%"></i></div>`;
+    }
+    for (const n of q.notes || []) h += `<div class="mnote">${esc(n)}</div>`;
+    if (q.detail) h += `<div class="mnote">已尝试:\n${esc(q.detail)}</div>`;
+    if (q.checkedAt) h += `<div class="small" style="margin-top:8px;">查询于 ${esc(new Date(q.checkedAt).toLocaleTimeString())}(额度结果缓存 1 分钟)</div>`;
+  }
+  h += `</div>`;
+
+  h += `<div class="msec"><h3>本渠道请求统计(最近 500 条日志内)</h3>`
+    + kv('今天请求', `${s.today} 次` + (s.failToday ? `,失败 ${s.failToday}` : ''), true)
+    + kv('累计请求', `${s.total} 次` + (s.fail ? `,失败 ${s.fail}` : ''), true)
+    + kv('平均耗时', s.total ? fmtMs(s.avg) : '-', true);
+  if (s.lastFail) {
+    const l = s.lastFail;
+    h += kv('最近失败', esc(new Date(l.time).toLocaleString()) + ' · ' + esc(l.status || '无响应'));
+    const msg = l.error || l.responsePreview || '';
+    if (msg) h += `<div class="mnote err">${esc(msg.toString().slice(0, 240))}</div>`;
+  }
+  h += `</div>`;
+
+  const rate = q && q.rate;
+  if (rate && rate.headers) {
+    h += `<div class="msec"><h3>上游返回的限流信息</h3>`;
+    for (const [k, v] of Object.entries(rate.headers)) h += kv(k, esc(v), true);
+    h += `<div class="small" style="margin-top:8px;">来自最近一次请求(${esc(new Date(rate.time).toLocaleTimeString())})</div></div>`;
+  }
+
+  const body = document.getElementById('chModalBody');
+  const top = body.scrollTop;
+  body.innerHTML = h;
+  body.scrollTop = top;
+}
+
+function openChannel(i) {
+  modalIdx = i;
+  document.getElementById('chModal').classList.add('open');
+  document.getElementById('chModalBody').scrollTop = 0;
+  renderModal();
+}
+function closeChannel() {
+  modalIdx = null;
+  document.getElementById('chModal').classList.remove('open');
+}
+async function enableCh(i) {
+  const c = CH[i];
+  if (!c) return;
+  try {
+    await fetch('/api/state/enable', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ key: c.key }) });
+  } catch { /* 失败的话下次刷新还是禁用状态 */ }
+  await loadChannels();
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modalIdx != null) closeChannel(); });
+
 async function loadChannels() {
   document.getElementById('authPrompt').style.display = 'none';
   try {
@@ -565,21 +737,15 @@ async function loadChannels() {
     const disabled = st.disabled || {};
     clientNames = st.clients || [];
 
-    const chips = [];
+    CH = [];
     for (const [groupName, channels] of Object.entries(groups)) {
       for (const c of channels) {
         const key = `${groupName}::${c.provider}::${c.model || ''}`;
-        const d = disabled[key];
-        chips.push({ name: c.provider, group: groupName, disabled: d });
+        CH.push({ name: c.provider, group: groupName, model: c.model || '', weight: c.weight ?? 1, key, disabled: disabled[key] });
       }
     }
-    document.getElementById('chipEmpty').style.display = chips.length ? 'none' : 'block';
-    document.getElementById('chipGrid').innerHTML = chips.map((c) => {
-      if (c.disabled) {
-        return `<div class="chip chip-warn"><div class="chip-top"><span class="chip-dot"></span><span class="chip-name">${esc(c.name)}</span></div><div class="chip-status">${new Date(c.disabled.until).toLocaleString()} 恢复</div></div>`;
-      }
-      return `<div class="chip chip-ok"><div class="chip-top"><span class="chip-dot"></span><span class="chip-name">${esc(c.name)}</span></div><div class="chip-status">可用</div></div>`;
-    }).join('');
+    renderChips();
+    if (!QUOTA) loadQuota(false);
 
     document.getElementById('stateUpdated').textContent = new Date().toLocaleTimeString();
     return { providerCount: (cfg.providers || []).length, groupCount: Object.keys(groups).length };
@@ -602,6 +768,7 @@ async function refreshAll() {
 document.getElementById('adminKeyInput')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKeyAndLoad(); });
 refreshAll();
 setInterval(refreshAll, 5000);
+setInterval(() => loadQuota(false), 60000);
 </script>
 </body>
 </html>

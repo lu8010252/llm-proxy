@@ -156,6 +156,26 @@ curl http://localhost:8787/v1/chat/completions \
 
 也可以在配置管理页 `/admin/` 里手动提前解禁,或者手动禁用某个渠道(比如你知道它这几天在维护)。
 
+### 渠道额度 / 详情(首页「渠道状态」)
+
+首页每个渠道方框会显示额度(剩余金额 / 免费账户状态),点击方框可看详情:渠道状态与恢复时间、额度明细、本渠道请求统计、上游返回的限流响应头。额度结果缓存 1 分钟,详情里可手动刷新。
+
+- OpenRouter:自动查询(`/api/v1/key`),显示 Key 剩余/消费;免费账户会提示每日次数限制
+- Agnes、Qwen 等中转站:自动尝试 new-api 的 `/api/usage/token` 和 OpenAI 兼容的 `/v1/dashboard/billing/*`
+- 智谱、阶跃:暂未适配,只显示通过网关发生的请求统计
+- 查不到或想自己指定接口,在 provider 里加 `quota` 字段:
+
+```json
+{
+  "name": "xxx",
+  "baseUrl": "https://example.com",
+  "apiKey": "...",
+  "quota": { "type": "custom", "url": "/api/balance", "remainingPath": "data.balance", "totalPath": "data.total", "unit": "$" }
+}
+```
+
+`type` 可选 `openrouter` / `newapi` / `custom` / `none`(不查);`custom` 的 `*Path` 用点号取 JSON 字段,数值要换算时加 `divisor`。
+
 ### 失败通知(ntfy)
 
 在 `config.json` 里配置:

@@ -423,6 +423,239 @@ app.post("/api/state/disable", checkAdminAuth, (req, res) => {
   }
 });
 
+// ---------- 渠道额度查询 ----------
+// 首页「渠道状态」用:按 provider 去上游查余额/额度(结果缓存,避免首页刷新时反复打上游)。
+// 自动识别:openrouter.ai → OpenRouter 接口;智谱/阶跃 → 暂未适配;其它(Agnes、Qwen 中转等)按 new-api / OpenAI 兼容的账单接口依次尝试。
+// 想自己指定?在 provider 里加 "quota": { "type": "custom", "url": "/xxx", "remainingPath": "data.balance", "totalPath": "", "usedPath": "", "unit": "$" }
+// 或者 "quota": { "type": "none" } 表示不查。
+const quotaCache = {};
+const rateInfo = {}; // provider -> 最近一次上游响应里带的限流/额度相关响应头
+const QUOTA_PER_USD = 500000; // new-api 默认 50 万点 = 1 美元
+
+function captureRate(name, headers) {
+  try {
+    const h = {};
+    headers.forEach((v, k) => {
+      if (/ratelimit|rate-limit|remaining|quota|balance/i.test(k)) h[k] = v;
+    });
+    if (Object.keys(h).length) rateInfo[name] = { time: new Date().toISOString(), headers: h };
+  } catch {
+    /* 记录不上不影响转发 */
+  }
+}
+function usd(n) {
+  n = Number(n);
+  if (!isFinite(n)) return "-";
+  return "$" + (Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(Math.abs(n) < 1 ? 4 : 2));
+}
+const clamp01 = (x) => (isFinite(x) ? Math.max(0, Math.min(1, x)) : null);
+function pathGet(obj, p) {
+  if (!p) return undefined;
+  return p.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+async function getJson(url, p, ms = 8000) {
+  const headers = { accept: "application/json" };
+  headers[p.authHeader || "Authorization"] = `${p.authPrefix ?? "Bearer "}${p.apiKey}`;
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(ms) });
+  const text = await r.text().catch(() => "");
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    /* 不是 JSON */
+  }
+  return { status: r.status, json, text };
+}
+
+async function quotaOpenRouter(p) {
+  const base = p.baseUrl.replace(/\/$/, "");
+  const r = await getJson(base + "/v1/key", p);
+  const d = r.json?.data;
+  if (r.status >= 400 || !d) return { ok: false, error: `HTTP ${r.status} ${r.text.slice(0, 120)}` };
+  const items = [];
+  const notes = [];
+  let summary = "";
+  let pct = null;
+  if (d.limit != null) {
+    const rem = d.limit_remaining ?? d.limit - (d.usage || 0);
+    pct = d.limit > 0 ? clamp01(rem / d.limit) : null;
+    items.push({ label: "Key 额度上限", value: usd(d.limit) });
+    items.push({ label: "Key 剩余", value: usd(rem), pct });
+    summary = "剩余 " + usd(rem);
+  } else {
+    items.push({ label: "Key 额度上限", value: "无上限" });
+  }
+  items.push({ label: "累计消费", value: usd(d.usage || 0) });
+  if (d.usage_daily != null) items.push({ label: "今日消费", value: usd(d.usage_daily) });
+  if (d.usage_weekly != null) items.push({ label: "本周消费", value: usd(d.usage_weekly) });
+  if (d.usage_monthly != null) items.push({ label: "本月消费", value: usd(d.usage_monthly) });
+  items.push({ label: "账户类型", value: d.is_free_tier ? "免费账户(未充值)" : "已充值账户" });
+  // 账户总余额需要管理密钥,普通 Key 会 403,查不到就算了
+  try {
+    const c = await getJson(base + "/v1/credits", p);
+    const cd = c.json?.data;
+    if (c.status < 400 && cd && cd.total_credits != null) {
+      const rem = cd.total_credits - (cd.total_usage || 0);
+      items.push({ label: "账户余额", value: usd(rem) });
+      if (!summary) summary = "余额 " + usd(rem);
+    }
+  } catch {
+    /* 忽略 */
+  }
+  if (d.is_free_tier) {
+    notes.push("免费模型有每日请求次数限制(未充值约 50 次/天,累计充值满 10 积分后约 1000 次/天,为官方规则);接口不返回剩余次数,请参考下方「本渠道请求统计」。");
+    if (!summary) summary = "免费账户";
+  }
+  if (!summary) summary = "已用 " + usd(d.usage || 0);
+  return { ok: true, kind: "openrouter", summary, pct, items, notes };
+}
+
+async function quotaNewApi(p) {
+  const base = p.baseUrl.replace(/\/$/, "");
+  let origin = base;
+  try {
+    origin = new URL(p.baseUrl).origin;
+  } catch {
+    /* 保持 base */
+  }
+  const roots = [...new Set([origin, base])];
+  const tried = [];
+  // 1) new-api 令牌用量接口(点数,50 万点 = 1 美元)
+  for (const root of roots) {
+    try {
+      const r = await getJson(root + "/api/usage/token", p);
+      tried.push(`${root}/api/usage/token → ${r.status}`);
+      const d = r.json?.data;
+      if (r.status < 400 && d && (d.total_available !== undefined || d.total_granted !== undefined)) {
+        const items = [];
+        const notes = [`额度按 ${QUOTA_PER_USD} 点 = $1 折算(new-api 默认比例),仅供参考`];
+        let summary, pct = null;
+        if (d.unlimited_quota) {
+          summary = "无限额度";
+          items.push({ label: "额度", value: "无限" });
+        } else {
+          const total = (d.total_granted || 0) / QUOTA_PER_USD;
+          const used = (d.total_used || 0) / QUOTA_PER_USD;
+          const rem = (d.total_available ?? d.total_granted - d.total_used) / QUOTA_PER_USD;
+          pct = total > 0 ? clamp01(rem / total) : null;
+          summary = "剩余 " + usd(rem);
+          items.push({ label: "总额度", value: usd(total) });
+          items.push({ label: "已用", value: usd(used) });
+          items.push({ label: "剩余", value: usd(rem), pct });
+        }
+        if (d.expires_at && d.expires_at > 0) items.push({ label: "到期时间", value: new Date(d.expires_at * 1000).toLocaleString("zh-CN") });
+        if (d.name) items.push({ label: "令牌名称", value: String(d.name) });
+        return { ok: true, kind: "newapi", summary, pct, items, notes };
+      }
+    } catch (e) {
+      tried.push(`${root}/api/usage/token → ${e.message}`);
+    }
+  }
+  // 2) OpenAI 兼容的账单接口
+  for (const root of roots) {
+    try {
+      const sub = await getJson(root + "/v1/dashboard/billing/subscription", p);
+      tried.push(`${root}/v1/dashboard/billing/subscription → ${sub.status}`);
+      const hard = sub.json?.hard_limit_usd ?? sub.json?.system_hard_limit_usd;
+      if (sub.status < 400 && typeof hard === "number") {
+        const end = new Date();
+        const start = new Date(end.getTime() - 90 * 86400000);
+        const ymd = (x) => x.toISOString().slice(0, 10);
+        const u = await getJson(`${root}/v1/dashboard/billing/usage?start_date=${ymd(start)}&end_date=${ymd(end)}`, p);
+        const used = typeof u.json?.total_usage === "number" ? u.json.total_usage / 100 : null;
+        const items = [{ label: "总额度", value: usd(hard) }];
+        let summary = "总额度 " + usd(hard), pct = null;
+        if (used != null) {
+          const rem = hard - used;
+          pct = hard > 0 ? clamp01(rem / hard) : null;
+          items.push({ label: "近 90 天已用", value: usd(used) });
+          items.push({ label: "剩余", value: usd(rem), pct });
+          summary = "剩余 " + usd(rem);
+        }
+        return { ok: true, kind: "billing", summary, pct, items, notes: [] };
+      }
+    } catch (e) {
+      tried.push(`${root}/v1/dashboard/billing → ${e.message}`);
+    }
+  }
+  return {
+    ok: false,
+    unsupported: true,
+    error: "没能自动查到额度(该中转站可能没开放额度接口)",
+    detail: tried.join("\n"),
+    notes: ['可以在配置里给这个 provider 加 quota 字段指定它的额度接口,例如 "quota": {"type":"custom","url":"/xxx","remainingPath":"data.balance","unit":"$"}'],
+  };
+}
+
+async function quotaCustom(p) {
+  const q = p.quota || {};
+  if (!q.url) return { ok: false, error: "quota.url 没填" };
+  const url = /^https?:/i.test(q.url) ? q.url : p.baseUrl.replace(/\/$/, "") + q.url;
+  const r = await getJson(url, p);
+  if (r.status >= 400 || !r.json) return { ok: false, error: `HTTP ${r.status} ${r.text.slice(0, 120)}` };
+  const div = Number(q.divisor) || 1;
+  const unit = q.unit ?? "";
+  const num = (path) => {
+    const v = pathGet(r.json, path);
+    return v === undefined || v === null || v === "" ? null : Number(v) / div;
+  };
+  const fmt = (n) => (n == null ? "-" : unit === "$" ? usd(n) : (Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(2)) + (unit ? " " + unit : ""));
+  const rem = num(q.remainingPath), total = num(q.totalPath), used = num(q.usedPath);
+  const remaining = rem ?? (total != null && used != null ? total - used : null);
+  const items = [];
+  if (total != null) items.push({ label: "总额度", value: fmt(total) });
+  if (used != null) items.push({ label: "已用", value: fmt(used) });
+  const pct = remaining != null && total ? clamp01(remaining / total) : null;
+  if (remaining != null) items.push({ label: "剩余", value: fmt(remaining), pct });
+  if (!items.length) return { ok: false, error: "接口通了,但按 remainingPath / totalPath / usedPath 没取到数字" };
+  return { ok: true, kind: "custom", summary: remaining != null ? "剩余 " + fmt(remaining) : "已用 " + fmt(used), pct, items, notes: [] };
+}
+
+async function fetchQuota(p) {
+  const type = p.quota?.type || (/openrouter\.ai/i.test(p.baseUrl) ? "openrouter" : /bigmodel\.cn|stepfun\.com/i.test(p.baseUrl) ? "none" : "newapi");
+  let out;
+  if (type === "openrouter") out = await quotaOpenRouter(p);
+  else if (type === "custom") out = await quotaCustom(p);
+  else if (type === "none")
+    out = {
+      ok: true,
+      kind: "none",
+      summary: "未适配额度查询",
+      items: [],
+      notes: ["这家厂商暂未适配 Key 额度查询(多数免费模型只有限流,没有余额概念)。下方「本渠道请求统计」是通过本网关实际发生的请求数据。若官方有查询接口,可在 provider 里加 quota 字段自定义。"],
+    };
+  else out = await quotaNewApi(p);
+  out.checkedAt = new Date().toISOString();
+  return out;
+}
+
+function getQuota(p, force) {
+  const ck = p.name + "|" + String(p.apiKey || "").slice(-6) + "|" + JSON.stringify(p.quota || {});
+  const c = quotaCache[ck];
+  if (!force && c && Date.now() - c.at < c.ttl) return c.promise;
+  const entry = { at: Date.now(), ttl: 30000 };
+  entry.promise = fetchQuota(p)
+    .then((d) => {
+      entry.ttl = d.ok ? 60000 : 30000;
+      return JSON.parse(redact(JSON.stringify(d), [p.apiKey])); // 上游报错信息里万一带了 Key,也不能返回给页面
+    })
+    .catch((e) => ({ ok: false, error: redact(String(e.message || e), [p.apiKey]), checkedAt: new Date().toISOString() }));
+  quotaCache[ck] = entry;
+  return entry.promise;
+}
+
+app.get("/api/quota", checkAdminAuth, async (req, res) => {
+  const force = req.query.refresh === "1";
+  const out = {};
+  await Promise.all(
+    Object.values(providers).map(async (p) => {
+      const q = await getQuota(p, force);
+      out[p.name] = { ...q, rate: rateInfo[p.name] || null };
+    })
+  );
+  res.json(out);
+});
+
 // 手动测试 ntfy 是否能收到通知,不用真的等渠道报错来触发
 // 支持传 url 覆盖,这样管理页可以测"输入框里还没保存的地址"
 app.post("/api/notify-test", checkAdminAuth, async (req, res) => {
@@ -610,6 +843,7 @@ async function groupForward(groupName, bodyObj, req, res, downstreamPath) {
     try {
       const upstream = await fetch(targetUrl, { method: req.method, headers, body: bodyBuf });
       entry.status = upstream.status;
+      captureRate(channel.provider, upstream.headers);
 
       if (autoDisableStatuses.includes(upstream.status)) {
         const key = channelKey(groupName, channel.provider, channel.model);
@@ -737,6 +971,7 @@ async function forward(providerName, req, res, downstreamPath) {
     });
 
     entry.status = upstream.status;
+    captureRate(providerName, upstream.headers);
 
     if (upstream.status >= 400) {
       // 出错时把响应体读出来存进日志,方便排查
