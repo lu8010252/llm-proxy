@@ -603,14 +603,20 @@ async function loadQuota(force) {
   renderChips();
 }
 
-function chipQuotaHtml(name) {
+function fmtTok(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n); }
+// 网关自己统计的用量(查不到官方额度时顶上)
+function localLine(c) {
+  const s = channelStats(c);
+  return `今日 ${s.today} 次` + (s.tokToday ? ` · ${fmtTok(s.tokToday)} tok` : '');
+}
+function chipQuotaHtml(c) {
   if (!QUOTA) return '<div class="chip-quota dim">额度查询中…</div>';
-  const q = QUOTA[name];
+  const q = QUOTA[c.name];
   if (!q) return '';
-  if (!q.ok) return `<div class="chip-quota dim" title="${esc(q.error || '')}">额度:查不到</div>`;
-  if (q.kind === 'none') return `<div class="chip-quota dim">${esc(q.summary)}</div>`;
+  if (!q.ok || q.kind === 'none') return `<div class="chip-quota dim" title="${esc(q.ok ? q.summary : (q.error || ''))}">${esc(localLine(c))}</div>`;
   const bar = q.pct != null ? `<div class="qbar"><i class="${q.pct < 0.1 ? 'low' : q.pct < 0.3 ? 'mid' : ''}" style="width:${Math.round(q.pct * 100)}%"></i></div>` : '';
-  return `<div class="chip-quota" title="${esc(q.summary)}">${esc(q.summary)}</div>${bar}`;
+  const txt = q.pct == null && !/\d/.test(q.summary) ? `${q.summary} · ${localLine(c)}` : q.summary;
+  return `<div class="chip-quota" title="${esc(txt)}">${esc(txt)}</div>${bar}`;
 }
 
 function renderChips() {
@@ -619,7 +625,7 @@ function renderChips() {
     const st = c.disabled ? `${new Date(c.disabled.until).toLocaleString()} 恢复` : '可用';
     return `<div class="chip ${c.disabled ? 'chip-warn' : 'chip-ok'}" onclick="openChannel(${i})" title="点击查看详情">
       <div class="chip-top"><span class="chip-dot"></span><span class="chip-name">${esc(c.name)}</span></div>
-      <div class="chip-status">${st}</div>${chipQuotaHtml(c.name)}</div>`;
+      <div class="chip-status">${st}</div>${chipQuotaHtml(c)}</div>`;
   }).join('');
   if (modalIdx != null) renderModal();
 }
@@ -636,6 +642,9 @@ function channelStats(c) {
     fail: mine.filter(isFail).length,
     failToday: today.filter(isFail).length,
     avg: mine.length ? mine.reduce((s, l) => s + (l.durationMs || 0), 0) / mine.length : 0,
+    tokToday: today.reduce((n, l) => n + (l.usage?.total || 0), 0),
+    tokTotal: mine.reduce((n, l) => n + (l.usage?.total || 0), 0),
+    withUsage: mine.filter((l) => l.usage).length,
     lastFail: mine.find(isFail) || null, // allLogs 最新在前
   };
 }
@@ -677,7 +686,10 @@ function renderModal() {
   h += `<div class="msec"><h3>本渠道请求统计(最近 500 条日志内)</h3>`
     + kv('今天请求', `${s.today} 次` + (s.failToday ? `,失败 ${s.failToday}` : ''), true)
     + kv('累计请求', `${s.total} 次` + (s.fail ? `,失败 ${s.fail}` : ''), true)
-    + kv('平均耗时', s.total ? fmtMs(s.avg) : '-', true);
+    + kv('平均耗时', s.total ? fmtMs(s.avg) : '-', true)
+    + kv('今天 Token', s.withUsage ? fmtTok(s.tokToday) : '-', true)
+    + kv('累计 Token', s.withUsage ? fmtTok(s.tokTotal) : '-', true);
+  h += `<div class="small" style="margin-top:6px;">Token 只统计上游返回了用量的请求(${s.withUsage}/${s.total} 条);流式请求需调用方开启 stream_options.include_usage 才有,所以是下限估算,不是官方额度。</div>`;
   if (s.lastFail) {
     const l = s.lastFail;
     h += kv('最近失败', esc(new Date(l.time).toLocaleString()) + ' · ' + esc(l.status || '无响应'));

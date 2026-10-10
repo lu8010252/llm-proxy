@@ -162,7 +162,9 @@ curl http://localhost:8787/v1/chat/completions \
 
 - OpenRouter:自动查询(`/api/v1/key`),显示 Key 剩余/消费;免费账户会提示每日次数限制
 - Agnes、Qwen 等中转站:自动尝试 new-api 的 `/api/usage/token` 和 OpenAI 兼容的 `/v1/dashboard/billing/*`
-- 智谱、阶跃:暂未适配,只显示通过网关发生的请求统计
+- 阶跃:尝试控制台额度接口 `QueryUserQuota`(POST);该接口用 API Key 不一定能通,不行可在 provider 里加 `"quota": {"headers": {"Oasis-Token": "登录控制台后从浏览器复制"}}`
+- 智谱:暂未适配
+- 所有渠道:查不到官方额度时,方框改显示网关自己统计的「今日请求次数 / Token」,详情里有今天和累计的 Token(只统计上游返回了 usage 的请求,是下限估算)
 - 查不到或想自己指定接口,在 provider 里加 `quota` 字段:
 
 ```json

@@ -229,17 +229,20 @@ function restoreRecentLogs() {
     const cutoff = retentionCutoff();
     const files = fs.readdirSync(LOGS_DIR).filter((f) => /^app-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort();
     const entries = [];
+    const usageById = new Map();
     for (const f of files) {
       for (const line of fs.readFileSync(path.join(LOGS_DIR, f), "utf-8").split("\n")) {
         if (!line) continue;
         try {
           const obj = JSON.parse(line);
+          if (obj.msg === "usage" && obj.id) usageById.set(obj.id, obj.usage);
           if (obj.method && obj.path && obj.time && Date.parse(obj.time) >= cutoff) entries.push(obj); // 只要保留期内的请求记录,跳过"config reloaded"这类系统日志
         } catch {
           /* 跳过损坏的行 */
         }
       }
     }
+    for (const e of entries) if (usageById.has(e.id)) e.usage = usageById.get(e.id);
     ring.push(...entries.slice(-RING_SIZE));
     if (entries.length) consoleLogger.info(`已从日志文件恢复 ${Math.min(entries.length, RING_SIZE)} 条请求记录`);
   } catch {
@@ -453,10 +456,18 @@ function pathGet(obj, p) {
   if (!p) return undefined;
   return p.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
-async function getJson(url, p, ms = 8000) {
+async function getJson(url, p, ms = 8000, opts = {}) {
   const headers = { accept: "application/json" };
   headers[p.authHeader || "Authorization"] = `${p.authPrefix ?? "Bearer "}${p.apiKey}`;
-  const r = await fetch(url, { headers, signal: AbortSignal.timeout(ms) });
+  Object.assign(headers, opts.headers || {});
+  const hasBody = opts.body !== undefined;
+  if (hasBody) headers["content-type"] = "application/json";
+  const r = await fetch(url, {
+    method: opts.method || (hasBody ? "POST" : "GET"),
+    headers,
+    body: hasBody ? JSON.stringify(opts.body) : undefined,
+    signal: AbortSignal.timeout(ms),
+  });
   const text = await r.text().catch(() => "");
   let json = null;
   try {
@@ -591,7 +602,7 @@ async function quotaCustom(p) {
   const q = p.quota || {};
   if (!q.url) return { ok: false, error: "quota.url 没填" };
   const url = /^https?:/i.test(q.url) ? q.url : p.baseUrl.replace(/\/$/, "") + q.url;
-  const r = await getJson(url, p);
+  const r = await getJson(url, p, 8000, { method: q.method, body: q.body, headers: q.headers });
   if (r.status >= 400 || !r.json) return { ok: false, error: `HTTP ${r.status} ${r.text.slice(0, 120)}` };
   const div = Number(q.divisor) || 1;
   const unit = q.unit ?? "";
@@ -611,11 +622,34 @@ async function quotaCustom(p) {
   return { ok: true, kind: "custom", summary: remaining != null ? "剩余 " + fmt(remaining) : "已用 " + fmt(used), pct, items, notes: [] };
 }
 
+// 阶跃星辰:控制台的额度接口(POST,body 为空对象)。是否支持用 API Key 鉴权我没法确认,
+// 不行的话在 provider 里加 "quota": {"headers": {"Oasis-Token": "浏览器登录后复制的值"}} 再试
+async function quotaStepfun(p) {
+  const q = p.quota || {};
+  const url = q.url || "https://platform.stepfun.com/api/step.openapi.devcenter.Dashboard/QueryUserQuota";
+  const hint = ['这是阶跃控制台的接口,用 API Key 不一定能通。可在 provider 里加 "quota": {"headers": {"Oasis-Token": "登录控制台后从浏览器请求头复制"}} 再试;查不到时,下方「本渠道请求统计」是网关自己统计的用量。'];
+  const r = await getJson(url, p, 8000, { method: "POST", body: q.body ?? {}, headers: q.headers });
+  if (r.status >= 400 || !r.json) return { ok: false, error: `HTTP ${r.status} ${r.text.slice(0, 120)}`, notes: hint };
+  const root = r.json.data && typeof r.json.data === "object" ? r.json.data : r.json;
+  const items = [];
+  const add = (k, v) => {
+    if (items.length < 12 && (typeof v === "number" || (typeof v === "string" && v.length < 60))) items.push({ label: k, value: String(v) });
+  };
+  for (const [k, v] of Object.entries(root)) {
+    if (v && typeof v === "object" && !Array.isArray(v)) for (const [k2, v2] of Object.entries(v)) add(`${k}.${k2}`, v2);
+    else add(k, v);
+  }
+  if (!items.length) return { ok: false, error: "接口通了,但没认出额度字段: " + r.text.slice(0, 160), notes: hint };
+  const pick = items.find((i) => /balance|remain|available/i.test(i.label)) || items[0];
+  return { ok: true, kind: "stepfun", summary: `${pick.label} ${pick.value}`, pct: null, items, notes: ["字段按接口返回原样列出,含义以阶跃官方为准"] };
+}
+
 async function fetchQuota(p) {
-  const type = p.quota?.type || (/openrouter\.ai/i.test(p.baseUrl) ? "openrouter" : /bigmodel\.cn|stepfun\.com/i.test(p.baseUrl) ? "none" : "newapi");
+  const type = p.quota?.type || (/openrouter\.ai/i.test(p.baseUrl) ? "openrouter" : /stepfun\.com/i.test(p.baseUrl) ? "stepfun" : /bigmodel\.cn/i.test(p.baseUrl) ? "none" : "newapi");
   let out;
   if (type === "openrouter") out = await quotaOpenRouter(p);
   else if (type === "custom") out = await quotaCustom(p);
+  else if (type === "stepfun") out = await quotaStepfun(p);
   else if (type === "none")
     out = {
       ok: true,
@@ -727,6 +761,48 @@ app.post("/api/test-provider", checkAdminAuth, async (req, res) => {
     res.status(502).json({ ok: false, error: e.message, targetUrl, durationMs: Date.now() - start });
   }
 });
+
+// 透传响应的同时,旁路留住响应尾部,从里面取 usage(非流式 / 流式带 include_usage 的都有),给「本渠道请求统计」估算 Token 用
+function extractUsage(s) {
+  const i = s.lastIndexOf('"usage"');
+  if (i < 0) return null;
+  const j = s.indexOf("{", i);
+  if (j < 0) return null;
+  let depth = 0;
+  for (let k = j; k < s.length; k++) {
+    if (s[k] === "{") depth++;
+    else if (s[k] === "}" && --depth === 0) {
+      try {
+        const o = JSON.parse(s.slice(j, k + 1));
+        const pt = o.prompt_tokens ?? o.input_tokens ?? 0;
+        const ct = o.completion_tokens ?? o.output_tokens ?? 0;
+        const total = o.total_tokens ?? pt + ct;
+        return total ? { prompt: pt, completion: ct, total } : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+function pipeWithUsage(upstream, res, entry) {
+  const src = Readable.fromWeb(upstream.body);
+  const ct = upstream.headers.get("content-type") || "";
+  if (/json|event-stream/i.test(ct)) {
+    let tail = "";
+    src.on("data", (chunk) => {
+      tail = (tail + chunk.toString("utf8")).slice(-6000);
+    });
+    src.on("end", () => {
+      const u = extractUsage(tail);
+      if (u) {
+        entry.usage = u;
+        fileLogger.info({ msg: "usage", id: entry.id, usage: u }); // 请求记录已经写盘了,用量单独补一行,重启恢复时合并回去
+      }
+    });
+  }
+  src.pipe(res);
+}
 
 function pickProviderForModel(model) {
   if (!model || !config.modelRouting) return null;
@@ -883,7 +959,7 @@ async function groupForward(groupName, bodyObj, req, res, downstreamPath) {
       entry.durationMs = Date.now() - start;
       pushLog(entry);
       if (!upstream.body) return res.end();
-      return Readable.fromWeb(upstream.body).pipe(res);
+      return pipeWithUsage(upstream, res, entry);
     } catch (err) {
       entry.status = 0;
       entry.error = err.message;
@@ -987,7 +1063,7 @@ async function forward(providerName, req, res, downstreamPath) {
     pushLog(entry);
 
     if (!upstream.body) return res.end();
-    Readable.fromWeb(upstream.body).pipe(res); // 原样透传流式响应(SSE)
+    pipeWithUsage(upstream, res, entry); // 原样透传流式响应(SSE)
   } catch (err) {
     entry.status = 502;
     entry.error = err.message;
